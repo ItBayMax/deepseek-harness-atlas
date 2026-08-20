@@ -1,0 +1,111 @@
+# ============================================================
+# DeepSeek Harness 架构学习知识库 (visualizer) —— .gitignore
+#
+# ⚠️ 本仓库的价值 = 代码 + 分析数据 + 文档。以下目录是深度源码分析的
+#    产物，克隆者【无法再生】（再生需要 deepseek-harness 仓库在特定
+#    相对路径），因此必须提交，切勿加入忽略：
+#      public/docs/          111 篇同步文档（Claude 解读 + 官方中文）
+#      public/data/          knowledge.json + docs-manifest.json
+#      public/extra-stats.json  统计口径与分析基线（驱动侧栏徽章）
+#      _meta/inventory/      文件清单（build-knowledge-db 的输入）
+#      _meta/REGRESSION-LOG.md
+# ============================================================
+
+# ---------- 依赖 ----------
+node_modules/
+.pnp
+.pnp.js
+
+# ---------- 构建产物（可再生：npm run build） ----------
+dist/
+dist-ssr/
+build/
+*.tsbuildinfo
+
+# knowledge.sqlite 是二进制副产物，可由已提交的输入再生（node scripts/build-knowledge-db.mjs），
+# 提交只会带来二进制 diff 噪音；站点运行时只读 public/data/knowledge.json。
+public/knowledge.sqlite
+
+# ---------- 缓存 ----------
+.cache/
+.vite/
+.eslintcache
+.stylelintcache
+.turbo/
+coverage/
+*.lcov
+
+# ---------- 日志 ----------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---------- 环境变量（约定：.env 一律不提交，模板用 .env.example） ----------
+.env
+.env.*
+!.env.example
+
+# ---------- 操作系统 ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------- IDE / 编辑器 ----------
+# JetBrains (IDEA / WebStorm / ...)
+.idea/
+*.iml
+*.ipr
+*.iws
+# VS Code（如团队需要共享推荐配置，可改为只保留 !.vscode/extensions.json）
+.vscode/
+*.code-workspace
+.history/
+# Visual Studio
+.vs/
+# 其他编辑器
+.fleet/
+.zed/
+*.swp
+*.swo
+*~
+
+# ---------- AI 编程工具（本地会话/配置/缓存，不属于工程本体） ----------
+# Claude Code
+.claude/
+CLAUDE.local.md
+.claude-checkpoints/
+# OpenAI Codex
+.codex/
+AGENTS.local.md
+# Qoder
+.qoder/
+# Cursor
+.cursor/
+.cursorignore
+.cursorindexingignore
+# Windsurf / Codeium
+.windsurf/
+.codeium/
+# Aider
+.aider*
+# Continue
+.continue/
+# Cline / Roo
+.clinerules
+.roo/
+# GitHub Copilot workspace
+.copilot/
+
+# ---------- 其他 ----------
+*.tgz
+.node_repl_history

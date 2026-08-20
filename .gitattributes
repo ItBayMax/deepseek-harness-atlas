@@ -1,0 +1,11 @@
+# 统一以 LF 入库与检出，跨平台协作不产生行尾 diff（Windows 上现代工具链均支持 LF）。
+* text=auto eol=lf
+
+# 二进制文件不做任何转换
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.sqlite binary
