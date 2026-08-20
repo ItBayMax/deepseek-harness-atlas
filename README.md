@@ -3,6 +3,7 @@
 针对 [`deepseek-harness`](https://github.com/deepseek-ai/deepseek-harness) 仓库的交互式学习地图：架构分层、依赖脉络、核心流程、模块深读（含**关键源码片段**）、**双源文档库**（官方文档中文优先 + Claude 解读文档）、活体源码浏览。
 
 > 本项目是第三方独立的源码分析与学习工具，与 DeepSeek 官方无隶属关系；分析基线（release + commit）见站点侧栏徽章。
+> 许可：本项目代码与解读文档以 [Apache-2.0](LICENSE) 发布；`public/docs/official/` 与源码片段来自 deepseek-harness（MIT），详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ![架构学习知识库](assets/screenshot-home.png)
 
