@@ -1,6 +1,6 @@
 # Third-Party Notices / 第三方声明
 
-本项目（deepseek-harness-atlas）自身以 [Apache License 2.0](LICENSE) 发布。以下内容来源于第三方项目，按其原始许可证再分发：
+本项目（deepseek-harness-atlas）自身以 [MIT License](LICENSE) 发布。以下内容来源于第三方项目，按其原始许可证再分发：
 
 ## deepseek-harness
 
