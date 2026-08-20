@@ -1,0 +1,48 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root { color-scheme: dark; }
+  html, body, #app { height: 100%; }
+  body {
+    @apply bg-ink-950 text-slate-200 antialiased;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { @apply bg-ink-900; }
+  ::-webkit-scrollbar-thumb { @apply bg-ink-600 rounded-full; border: 2px solid transparent; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-ink-700; }
+}
+
+@layer components {
+  .tech-card { @apply relative rounded-xl border border-ink-700/70 bg-ink-850/60 backdrop-blur-sm; }
+  .tech-card-hover { @apply transition-all duration-300 hover:border-cyan-glow/50 hover:shadow-glow; }
+  .glow-text { text-shadow: 0 0 18px rgba(34, 211, 238, 0.5); }
+  .bg-grid { background-size: 40px 40px; @apply bg-grid-tech; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full border border-ink-600/60 bg-ink-800/70 px-2.5 py-0.5 text-xs text-slate-300; }
+  .nav-link { @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-400 transition-colors hover:bg-ink-800/70 hover:text-slate-100; }
+  .nav-link-active { @apply bg-cyan-glow/10 text-cyan-glow shadow-glow; }
+}
+
+.mermaid-slot { @apply my-4 overflow-x-auto rounded-lg border border-ink-700/60 bg-ink-950/60 p-4; }
+.mermaid-slot svg { max-width: 100%; height: auto; }
+
+.md-body { @apply text-[15px] leading-relaxed text-slate-300; }
+.md-body h1 { @apply mb-4 mt-2 text-2xl font-bold text-slate-50; }
+.md-body h2 { @apply mb-3 mt-8 border-b border-ink-700/60 pb-2 text-xl font-semibold text-cyan-glow; }
+.md-body h3 { @apply mb-2 mt-6 text-lg font-semibold text-slate-100; }
+.md-body h4 { @apply mb-2 mt-4 font-semibold text-slate-200; }
+.md-body p { @apply my-3; }
+.md-body ul { @apply my-3 list-disc space-y-1 pl-6; }
+.md-body ol { @apply my-3 list-decimal space-y-1 pl-6; }
+.md-body a { @apply text-cyan-glow underline decoration-cyan-glow/30 underline-offset-2 hover:decoration-cyan-glow; }
+.md-body blockquote { @apply my-4 border-l-2 border-cyan-glow/50 bg-ink-850/50 py-2 pl-4 pr-2 text-slate-400; }
+.md-body code { @apply rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[13px] text-cyan-300; }
+.md-body .md-pre { @apply my-4 overflow-x-auto rounded-lg border border-ink-700/60 bg-ink-950/80 p-4; }
+.md-body .md-pre code { @apply bg-transparent p-0 text-[13px] text-slate-300; }
+.md-body table { @apply my-4 block w-full overflow-x-auto border-collapse text-sm; }
+.md-body th { @apply border border-ink-700/70 bg-ink-800/70 px-3 py-2 text-left font-semibold text-slate-200; }
+.md-body td { @apply border border-ink-700/50 px-3 py-2 align-top text-slate-300; }
+.md-body tr:nth-child(even) td { @apply bg-ink-850/40; }
+.md-body strong { @apply font-semibold text-slate-100; }
+.md-body hr { @apply my-6 border-ink-700/60; }
