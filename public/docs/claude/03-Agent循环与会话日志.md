@@ -142,6 +142,71 @@ token 级 `assistant/chunk` 让标量 SQLite 布局一行一事件，105 会话�
 
 **教学价值**：这是"物理表示与逻辑契约分离"的教科书案例——回放、`sourceEventSeqs`、UI 保真、恢复语义全部不变，变的只是磁盘布局。对比被否掉的方案（合并逻辑事件、周期性压缩器、逐 payload 压缩）比结论本身更值得读。
 
+## 📌 0.1.2 增量（rc.8 → 0.1.2-alpha.2）
+
+### SQLite schema 17 → 20：一段值得读的三步曲
+
+版本号跳了三级，而**每一级的故事都不一样**——这段历史本身就是"预发布期如何演进持久格式"的教材：
+
+| 变更 | 版本 | 内容 |
+|---|---|---|
+| `42dc2a46c2` | 17 → 18 | **删除 `ignorable` 字段**（普查后认为没有第一方生产者） |
+| `df76bc695b` | 18 → 19 | 存储优化（下面详述） |
+| `2c6ff296af` | 19 → 20 | **Revert**：恢复 `ignorable` |
+
+第三步是本轮最有教育意义的事件：PR #3087 普查了所有生产者、没找到第一方用户，于是把 `ignorable?: true` 从信封里删掉、让所有未知事件变成读必需（schema 18）。**但普查漏掉了一个仓库外的第三方插件**——它会发一个信息性事件，不在仓库生成的 `KNOWN_SESSION_EVENT_TYPES` 里，于是第一方读者开始拒绝已经存好的会话。因为该插件没有别的注册或版本化机制，字段被**跨全部表示层回滚**（种子校验、JSONL、SQLite、API 传输、生成目录、测试夹具）。
+
+所以今天的规则与 rc.8 **逐字节相同**：
+
+```ts
+// packages/session/session-persistence/src/coordinator.ts:1145
+if (KNOWN_SESSION_EVENT_TYPES.has(event.type) || event.ignorable === true) continue
+```
+
+**字段缺失仍然意味着读必需。** 官方给这个字段设了明确的退休条件：只有当替代机制覆盖了生产、持久化、重载**和**传输，并为已携带该标记的会话提供显式切换路径之后，才可以再删。（被否决的两个方案也有价值："把所有仓库外事件当可忽略"——读者无法推断跳过一个未知持久事件是否安全；"把已挂载插件的事件名注册为已知"——名字注册不能证明省略安全，还会让"能否接受"取决于读者当前的组合。）
+
+### 存储优化：阈值消失、字典压缩、64KiB 页
+
+新语料是 **501 个真实会话 / 1615 万逻辑事件 / 20 亿字节**（rc.8 那轮是 105 个会话），每个候选重建 5 次、轮换执行顺序、3 轮完整读+尾读，去掉最高最低取平均。结论：
+
+- **rc.8 的"≥4 KiB 才压"阈值取消了**。现在每个 `events.data` 值都试 level-3 Zstandard + 一份**打包进 schema 的 64 KiB 原始内容字典**，只在更小时保留压缩形式：
+
+  ```ts
+  // packages/session/session-persistence-sqlite/src/compression.ts:110
+  function encodeData(serialized: string): string | Uint8Array {
+    const bytes = Buffer.from(serialized)
+    const compressed = zstdCompressSync(bytes, DATA_ZSTD_OPTIONS)
+    return compressed.length < bytes.length ? compressed : serialized
+  }
+  ```
+
+  字典的**字节本身属于 schema**（SHA-256 由测试钉住），换字典必须提版本——延续了"同一 schema 版本的库必须独立于运行时可读"的纪律。
+- **JSONL 从 Zstandard level 19 退回标准级别**：level 19 多省 12.1% 体积，但**完整写入 +67.0%、fork +129.8%**，而读取变化 <1%——典型的"省空间省过头"，果断退回。
+- **全新数据库 `PRAGMA page_size = 65536`**（在建 schema 之前应用；已有库保持原页大小，因为 SQLite 在分配后忽略该 pragma）。实测 4 KiB → 256.97 MB，64 KiB → 233.18 MB（**−9.26%**），`events` 页内未用字节 30.25 MB → 6.95 MB，且没有测到延迟回归（fork 反而 −14.8%）。
+- `sourceEventSeqs` 换新编码（JSONL 存标量+闭区间；SQLite 存"标记 zigzag 差值"或 `(start, count)` varint，取更小者），SQLite 还加了内部整数 `sessions.id`，公开会话 id 只在 `sessions.session_key` 出现一次。
+
+> ⚠️ 我们发现的一处官方**归因**漂移：2026-08-25 那篇 Note 把这批成果写成 schema 20（"字典字节属于 schema 20"），但 git 显示被测的工作落在 **19**，20 来自不相关的 `ignorable` 回滚。包 README（`session-persistence-sqlite/README.md:36`）说得精确，Note 不精确——只读 Note 的人会把页大小/字典结论归给 20。
+
+### 会话投影升级为"强制接缝"
+
+rc.8 时宿主 reader 可以容忍 `sessionProjections` 注册表或某个键缺失并用默认值兜底——于是"宿主行为依赖投影状态"的插件可能在状态静默缺席的情况下激活。0.1.2 把它变成**强制**：宿主 reader 要么在插件 `inject` 里声明 `sessionProjections`，要么显式解析注册表+键，并在**首次依赖访问时抛错**，永不默认。
+
+配套一个**类型表分裂**：
+- `SessionProjectionStateMap`（新）—— 宿主 fold 状态
+- `SessionProjectionMap`（沿用旧名与语义）—— **唯一**客户端可见的全值表
+
+于是：每个 `ProjectionDefinition` 必须提供 `stateSchema`（缓存行必须先校验才能给 fold 播种）；客户端可见的单元额外提供 `wire.viewSchema` + `wire.view`，宿主专属单元**整个省掉 `wire`**；`snapshot()` 只枚举有 `wire` 的定义——**宿主专属状态即使漏标受众也不可能漏进 API 载荷**（结构性保证优于纪律性保证）。`persist` 退出开关被移除：每个单元的状态都做检查点。
+
+**投影缓存改为每会话一个文件**（域规格版本 3 → 4，`layout: 'per-record'`）。原来是一个全局 `session_projcache.json` 持有 sessions 表，于是每次节流检查点都要**重写所有会话的行**（写放大随会话数增长），一个文件损坏就废掉整个缓存。现在一个会话一份版本化文档，**爆炸半径是一条记录**（损坏或版本过期读作"无此记录"）。另一个大改进：读写共享同一份一致状态——`cachedSnapshot(meta)` 是**同步零 I/O** 的内存表查找，写入排在域的单写链上（先持久后内存），rc.8 那个"落后于节流写入的直读磁盘"路径消失了。
+
+### 新增：会话日志增量上传（默认关闭）
+
+新包 `session/session-log-deepseek`：把规范会话日志**增量上传**到官方 DeepSeek LLM API，默认 `enabled: false`（出厂 profile 挂载它，但要靠 overlay 打开）。三个设计点值得学：
+
+1. **模型不可见**：它是请求的模型输入字段的**兄弟**，绝不插进 `messages`/系统提示/工具 schema——**零模型输入 token、不改 KV 缓存前缀**。
+2. **水位按精确会话身份折叠**（所以 fork 会忽略继承来的父水位），每次发"水位之后的连续后缀"。
+3. **at-least-once 且方向明确**：适配器在 HTTP 2xx 之后、消费 SSE 体**之前**调 `accept()`；传输或非 2xx 失败不追加记录，于是不确定区间会重发——**不确定产生重复，永不产生跳号**。
+
 ## 与上层的关系
 
 - **UI/SDK 消费 `session/event`**（可回放的事实流），**live 协调走 `agent/*`**（inbox/status/pre-step/request/turn-stopping）——两个域职责分明。
