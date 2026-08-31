@@ -121,6 +121,30 @@ export const MODULES = [
     tags: ['experimental', 'agent-teams', 'multi-agent'],
     risks: ['writeScopes 只警告不上锁——共享 checkout 的并发要靠任务切分 + Lead 终审 diff', 'scoped 的 send_message/list_agents/interrupt_agent 遮蔽 tool-subagent-control 同名全局工具，同挂需 disable 旧行', '失败成员永久占用名字（可见性优先于回收）；quiet 消息发给 inactive 成员会一直等它因别的原因醒来'] },
 
+  { id: 'webhook', side: '宿主（Node 进程）', layer: 'feature', name: 'webhook', title: '🆕 Webhook 自动化入口',
+    doc: 'claude/11-Webhook与自动化入口.md',
+    oneLiner: '0.1.2 新增：刻意只有两个方法（register/dispatch），唯一内建动作是"把验签的外部事件变成一个普通根会话"，然后退出画面。HMAC 在 JSON.parse 之前验；GitHub 评审示例的结果进 DSH 会话而非 PR 评论。',
+    keyClasses: ['WebhookRuntime(ctx.webhookRuntime)', 'register(rule)', 'dispatch(delivery)', 'WebhookSessionRequest', 'webhook-github handler', 'MessageSourceMap.webhook'],
+    patterns: ['能力接缝三角色', '领域隔离（isolate）', 'Fail-closed 审批'], deps: ['core-spine', 'storage-config', 'host-rpc'],
+    tags: ['webhook', 'automation', 'github'],
+    risks: ['202 故意弱于现实：它先于规则匹配与会话创建，从不表示"会话已存在"', '无去重、无重试、无完成结果——幂等是规则的责任；崩溃会丢未准入的调用', '规则是任意受信代码（Cordis 插件，全宿主权限），信任级别等同 shell 访问', '默认没有任何 bundle 挂载它，只能靠 patch overlay 激活'] },
+
+  { id: 'webworker', side: '宿主（Node 进程）', layer: 'feature', name: 'experimental/webworker', title: '🆕 浏览器内运行时（WebWorker）',
+    doc: 'claude/09-浏览器内运行时WebWorker.md',
+    oneLiner: '0.1.2 实验特性：整棵 harness 插件树跑在一个浏览器 Web Worker 里，跑逐字节相同的 web profile 配置。唯一平台分叉是一张模块代理表——fs-local/subprocess-local/bash-sandbox/chokidar/landlock-run 全部原样运行。',
+    keyClasses: ['createWorkerHost()', 'MODULE_PROXIES', 'MemoryVfs', 'LOWERING_VERSION', 'WRAPPER_PARAMS', 'LANDLOCK_EXECUTABLE', 'TunnelServer'],
+    patterns: ['能力接缝三角色', '换 provider 换世界', '同构插件树', '实验包隔离'], deps: ['cordis-vendor', 'fs', 'shell-exec', 'sandbox'],
+    tags: ['experimental', 'browser', 'webworker', 'vfs'],
+    risks: ['worker_threads/vm/net/sqlite/dns 是结构桩——workflow 与 code-runtime 插件挂得上、一用就失败', 'shell 不是 bash：无循环/函数/作业控制，命令表只有 coreutils（无 git 无网络工具）', 'Worker 限制是 VFS 边界不是内核 Landlock——官方明确不声称原生进程隔离', 'shell 进程无同步文件系统（SAB 需要 COOP/COEP，GitHub Pages 给不了），目录遍历每条目一次往返'] },
+
+  { id: 'inspector', side: '宿主（Node 进程）', layer: 'support', name: 'experimental/inspector', title: '🆕 Inspector：DevTools 看活插件树',
+    doc: 'claude/10-Inspector与运行时检视.md',
+    oneLiner: '0.1.2 实验特性：把运行中的宿主与浏览器客户端同时挂到 Chrome DevTools。Worker 是唯一 CDP 端点——因为宿主主线程暂停时无法投递 Debugger.resume；Elements 面板里渲染活的 Cordis 树。',
+    keyClasses: ['InspectorService(ctx.inspector)', 'publish(topic,payload)', 'CordisTreeCollector', 'CordisTreeSnapshot', 'CdpNumericId<Role>', 'cordis.getTree()'],
+    patterns: ['Branded 不透明 id', '效果/析构器（RAII）', '实验包隔离'], deps: ['cordis-vendor', 'extensions'],
+    tags: ['experimental', 'devtools', 'observability', 'cdp'],
+    risks: ['CDP target 授予宿主/客户端领域任意代码执行，fetch 抓包含机密且零脱敏——loopback 监听是必须的，但它不是认证', '客户端活跃调试不支持（页面 JS 无法一边暂停自己一边处理控制消息）', 'Cordis 没有全局 Context 注册表：只被应用代码持有的 Context 刻意缺席', 'Worker 意外退出不自动重启'] },
+
   { id: 'workflow', side: '宿主（Node 进程）', layer: 'feature', name: 'workflow + jobs', title: '工作流引擎与后台任务',
     doc: 'official/subsystems/workflow.zh.md',
     oneLiner: 'ctx.workflowEngine（worker 线程）跑编排脚本，agent() 扇出走 ctx.subagents；ctx.jobs 是后台工作的统一注册表（bash/PTY/子代理都是生产者）。',
@@ -155,11 +179,11 @@ export const MODULES = [
 
   { id: 'session', side: '宿主（Node 进程）', layer: 'data', name: 'session + session-query', title: '会话持久化·投影·标题·遥测·检索',
     doc: 'official/subsystems/persistence.zh.md',
-    oneLiner: '同一 SessionEvent 词汇的两个后端（jsonl/sqlite）；投影单元把事件流折成 UI 状态（冷读=缓存行+尾部回放，列表不读全日志）；标题、OTel 遥测、全文检索各自成接缝。rc.8：SQLite schema 15→17 物理分片打包（1 行≤1024 个 chunk + Zstd level3，体积 -89.4%、写快 19.4%），逻辑事件流零改动。',
-    keyClasses: ['session-persistence-jsonl', 'session-persistence-sqlite(schema17)', 'ChunkRow', 'SessionProjections', 'session-projection-cache', 'session-title', 'session-query-sqlite'],
+    oneLiner: '同一 SessionEvent 词汇的两个后端（jsonl/sqlite）；投影单元把事件流折成 UI 状态；标题、OTel 遥测、全文检索各自成接缝。0.1.2：schema 17→20 三步曲（删 ignorable→存储优化→revert 恢复），字典压缩取消 4KiB 阈值、新库 64KiB 页；投影升级为强制接缝 + 每会话缓存文件。',
+    keyClasses: ['session-persistence-jsonl', 'session-persistence-sqlite(schema20)', 'ChunkRow', 'SessionProjectionStateMap', 'SessionProjectionMap', 'stateOf()', 'session-log-deepseek', 'session-query-sqlite'],
     patterns: ['事件溯源', 'CQRS 式投影', '能力接缝三角色'], deps: ['core-spine', 'storage-config'],
     tags: ['persistence', 'projection', 'telemetry'],
-    risks: ['SESSION_FORMAT_VERSION=0：未发布期无兼容承诺，后端直接拒旧格式', '未识别且未标 ignorable 的事件类型 → 拒绝重建会话（宁可过度拒绝）'] },
+    risks: ['SESSION_FORMAT_VERSION=0：未发布期无兼容承诺，后端直接拒旧格式', '未识别且未标 ignorable 的事件类型 → 拒绝重建会话（宁可过度拒绝）。0.1.2 曾删掉 ignorable（schema 18）又因漏查第三方插件而回滚（schema 20）——退休需先有替代机制', '投影现在是强制接缝：宿主 reader 不许在注册表/键缺失时降级，首次依赖访问即抛错'] },
 
   { id: 'storage-config', side: '宿主（Node 进程）', layer: 'data', name: 'storage + settings + credentials 等', title: '存储·设置·凭证·身份·附件·工作区',
     doc: 'official/subsystems/storage.zh.md',
@@ -171,9 +195,9 @@ export const MODULES = [
 
   { id: 'host-rpc', side: '宿主（Node 进程）', layer: 'protocol', name: 'host + api + typert', title: '宿主服务与 Typert RPC 网关',
     doc: 'claude/07-Web客户端与外部协议.md',
-    oneLiner: '四层栈：webserver（哑 http 载体）→ connection（/api + 双下行 WS）→ gateway（编译期反射生成的描述符+Zod 校验）→ remotes（显式暴露选择）；复杂宿主对象不过线（Agent→agentId 查找）。',
-    keyClasses: ['WebServer', 'ApiProxy', 'TypertGateway', 'typert-generator', '@Remote', 'plugin-inventory'],
-    patterns: ['编译期反射 RPC', 'BFF', '信任围栏'], deps: ['core-spine', 'storage-config'],
+    oneLiner: '0.1.2 大重构：ctx.apiProxy 与 host/apiproxy 整包删除——传输归 gateway（ctx.remote），业务归五个 controller（session/settings/credentials/workspace/directoryPicker）。两条下行 WS 合为一条 /api/remote.mux；@Remote 新增 stream 模式；统一 RemoteError 码表；浏览器令牌认证取代 loopback 名单。',
+    keyClasses: ['WebServer', 'TypertGateway(ctx.remote)', 'SessionController', 'SettingsController', 'WorkspaceController', '@Remote({mode:"stream"})', 'RemoteJournalStream', 'RemoteError', 'browserAuth'],
+    patterns: ['编译期反射 RPC', '物理/逻辑表示分离', '信任围栏', 'Fail-closed 审批'], deps: ['core-spine', 'storage-config'],
     tags: ['rpc', 'typert', 'http'],
     risks: ['/api 信任围栏：非 loopback Host 需显式 trustedHosts（防 DNS rebinding）；特权方法钉死 loopback'] },
 
@@ -212,18 +236,18 @@ export const MODULES = [
   { id: 'client-kernel', side: '浏览器（Web 客户端）', layer: 'fe-kernel', name: 'client 内核', title: '浏览器引导·模块系统·连接·slot 内核',
     doc: 'claude/07-Web客户端与外部协议.md',
     oneLiner: '浏览器里跑同一个 vendored Loader（loader.internal = 浏览器模块表）；__DSH_BOOT__ 图由宿主扫描 dsh.client 生成；ui-slots 零依赖 slot 内核（声明即认领）；SSE 驱动客户端 HMR。rc.8 重排五层：内核变 React-free，新包 ui-renderer 拿走 React root（替换它=自动重挂应用）；web-react/schema-form 已删除。',
-    keyClasses: ['AppWebEntry', 'ClientModuleSystem', 'ui-renderer(React root)', 'PLATFORM_MODULES', 'DSH_CLIENT_* 构建环境', 'connection', 'ui-slots SlotCore', 'client-hmr'],
+    keyClasses: ['AppWebEntry', 'ClientModuleSystem', 'ui-renderer(React root)', 'client/store(0.1.2 新)', 'PLATFORM_MODULES', 'DSH_CLIENT_* 构建环境', 'ui-slots SlotCore', 'client-hmr'],
     patterns: ['同构插件树', '声明即认领', '懒 CJS 闭包工厂'], deps: ['host-rpc', 'cordis-vendor'],
     tags: ['browser', 'boot', 'slots', 'hmr'],
     risks: ['前端壳零组合决策：哪些插件进浏览器由宿主 yml 决定', '裸 vite serve 被主动拒绝——页面必须由 dsh web 注入 boot 清单'] },
 
   { id: 'client-ui', side: '浏览器（Web 客户端）', layer: 'fe-ui', name: 'client UI 插件族', title: 'Chat 三段渲染与全部 UI 面板',
     doc: 'claude/07-Web客户端与外部协议.md',
-    oneLiner: 'session/event → ConversationNodeDefinition 折叠 → ChatNodeDataMap 声明合并 → keyed slot 渲染；ui-conversation 管布局位、ui-tool 管工具卡呈现；30+ ui-* 插件各管一个面板。rc.8：插件自有设置卡（keyed slot，注册即暴露）、describe 镜像（冷启动 RPC 15→2 且有预算测试钉住）、@文件/会话引用输入、品牌插槽（ui-brand-official 一次注册整组）。',
-    keyClasses: ['ConversationNodeDefinition', 'ChatNodeSeat', 'ui-conversation', 'ui-tool', 'ui-reference(@提及)', 'SettingsDescribeMirror', 'ui-brand-official', 'ui-settings-*', 'ui-workspace'],
+    oneLiner: 'session/event → ConversationNodeDefinition 折叠 → ChatNodeDataMap 声明合并 → keyed slot 渲染。0.1.2：client/runtime 整包删除（内容散入 controller/ui-conversation/store）；新增 ui-chat（节点定义搬来）·ui-session（唯一 Session 适配器）·ui-approval·ui-schedule；工具卡改由客户端从原始事件派生；Lexical 编辑器取代三层耦合 textarea；locale 拥有全部文案（遗漏=类型错误）。',
+    keyClasses: ['ConversationNodeDefinition', 'ui-chat', 'ui-session(ctx.uiSession)', 'ui-approval', 'ui-tool card models', 'ReferenceChipNode(Lexical)', 'pendingInteractions', 'ui-settings-*'],
     patterns: ['事件折叠', '声明合并扩展', 'keyed slot'], deps: ['client-kernel'],
     tags: ['chat', 'ui-plugins', 'react'],
-    risks: ['未注册的节点 kind 渲染 JSON 兜底而不是崩——加新聊天行是挂插件不是改内建', '每节点一个 seat：assistant 增量不重渲染兄弟节点'] },
+    risks: ['未注册的节点 kind 渲染 JSON 兜底而不是崩——加新聊天行是挂插件不是改内建', '每节点一个 seat：assistant 增量不重渲染兄弟节点', '⚠️ 0.1.2 起给工具定义宿主侧 presentCall/presentResult 不再能得到 Web 卡片——必须在客户端插件注册 tool.call.toolview keyed renderer', 'Lexical chip 的 isKeyboardSelectable() 必须为 false，否则方向键在 chip 边缘死锁'] },
 ];
 
 export const RELATIONS = [
@@ -236,6 +260,11 @@ export const RELATIONS = [
   { from: 'session', to: 'client-ui', type: 'data-flow', label: 'session/event', desc: 'UI 从持久事件流渲染，live 与回放同一条路径。' },
   { from: 'agent-team', to: 'subagent', type: 'calls', label: 'startContinuable', desc: 'Teams 不造第二套委托机制：创建/打断/排空全部委托回 subagent 接缝（rc.8 为此加了 childId 预留与精确排空）。' },
   { from: 'agent-team', to: 'session', type: 'data-flow', label: 'team/* 事件', desc: '花名册/信箱/任务板全部以四种 team/* 事件落 Lead 会话日志，恢复=对账重放。' },
+  { from: 'webhook', to: 'core-spine', type: 'calls', label: 'agents.create + followup', desc: '验签投递 → 建普通根会话 → followup() 插入收件箱即提交点，之后运行时退出画面。' },
+  { from: 'webhook', to: 'host-rpc', type: 'data-flow', label: '第二个 webServer 实例', desc: '同一个 node:http 载体，但在 isolate webServer 的 group 里——暴露 ingress 不必暴露 /api。' },
+  { from: 'webworker', to: 'cordis-vendor', type: 'calls', label: 'loader.internal', desc: '浏览器 Worker 里复用同一个 Loader，模块表替换 node:* 内建，插件层零改动。' },
+  { from: 'webworker', to: 'fs', type: 'data-flow', label: 'MemoryVfs', desc: 'fs-local 原样运行在 VFS 上；mtime 严格单增以骗过陈旧写入守卫。' },
+  { from: 'inspector', to: 'extensions', type: 'data-flow', label: 'ctx.inspector 进 API 目录', desc: 'tool-cordis 把 ctx.inspector 教给模型：模型写的动态插件能发布观测、读它正在改的插件树。' },
 ];
 
 export const DATAFLOWS = [
@@ -282,6 +311,23 @@ export const DATAFLOWS = [
     { moduleId: 'session', label: '崩溃恢复：queued−delivered 重试投递；未终结 provisioning 与子会话对账（三证齐全才转 active）', type: 'storage' },
     { moduleId: 'agent-team', label: 'Lead 检查最终 diff + 跑测试后汇总作答（writeScopes 只警告，集成边界在 Lead）', type: 'output' },
   ]},
+  { id: 'webhook-flow', name: '🆕 外部事件 → Agent 会话（0.1.2）', desc: '验签在解析之前；followup 插入收件箱就是提交点，之后运行时不再参与。', steps: [
+    { moduleId: 'webhook', label: 'POST /github（独立端口/独立 webServer 实例，isolate 只隔离 webServer）', type: 'input' },
+    { moduleId: 'webhook', label: '读有界原始 body → 逐请求解析密钥 → HMAC-SHA256 验签（**在 JSON.parse 之前**）', type: 'decision' },
+    { moduleId: 'webhook', label: '才 JSON.parse + snapshotJsonValue → dispatch(delivery) 同步派发 → 立刻 202', type: 'process' },
+    { moduleId: 'webhook', label: '规则 run() 返回请求 → workspaceRegistry.create → agents.create（挂 preset）', type: 'process' },
+    { moduleId: 'core-spine', label: 'attachSession 先于任何 prompt → 设权限预设 → 改标题 → followup() 插入收件箱＝提交点', type: 'output' },
+    { moduleId: 'client-ui', label: '会话像手工开的对话一样出现在 Web UI 的 Workspace 下（无第二套自动化 UI）', type: 'output' },
+  ]},
+  { id: 'browser-only', name: '🆕 整个 harness 跑进浏览器（0.1.2）', desc: '同一份 web profile 配置逐字节跑在 Web Worker 里；替换的是模块，不是插件。', steps: [
+    { moduleId: 'webworker', label: '打包器构建期做 pack lowering（ESM→CJS + AsyncLocalStorage 协议），产出 gzip ustar 镜像', type: 'input' },
+    { moduleId: 'webworker', label: 'createWorkerHost() 同步返回（先能收 postMessage）→ start() 边下边解镜像进 MemoryVfs', type: 'process' },
+    { moduleId: 'webworker', label: '校验 LOWERING_VERSION（旧转换器降级的镜像直接拒）→ 装 process 全局 + 模块代理表', type: 'decision' },
+    { moduleId: 'cordis-vendor', label: '用镜像里那份 app-boot 启动：hostCtx.loader.internal = loader.internal', type: 'process' },
+    { moduleId: 'shell-exec', label: 'spawn 启子 Worker 当进程：SIGKILL 能中断死循环（协作式解释器做不到）', type: 'process' },
+    { moduleId: 'sandbox', label: 'landlock-run 解析为虚拟可执行文件，逐调用授权——但明说是 VFS 边界不是内核 Landlock', type: 'decision' },
+    { moduleId: 'webworker', label: 'postMessage 隧道说 HTTP：合成 Request 喂给假 node:http 捕获的真路由表', type: 'output' },
+  ]},
   { id: 'delegate', name: '子代理委托与外部协议闭环', desc: '一个接缝六种传输；dsh 可以驱动另一个产品的 agent。', steps: [
     { moduleId: 'core-spine', label: '模型调 subagent 工具（tool-subagent 暴露一个配置好的 provider）', type: 'input' },
     { moduleId: 'subagent', label: 'ctx.subagents 选传输：spawn/fork 同进程 · acp/codex/claude-code 子进程 · dsh-sdk 远程', type: 'decision' },
@@ -299,7 +345,11 @@ export const TECH = [
   { name: 'React 18 + Vite', category: '框架', side: '浏览器', desc: 'Web 客户端 UI；但组合与生命周期由浏览器端 Cordis 树主导，React 只是渲染绑定。', tags: ['spa'] },
   { name: 'schemastery', category: '框架', side: '宿主', desc: '插件 Config 声明+校验+默认值+表单元数据（schema 即 UI）。', tags: ['validation'] },
   { name: 'Zod (Typert 生成)', category: '框架', side: '宿主', desc: 'Typert 编译期反射生成的 RPC 编解码器；apiproxy 双层校验。', tags: ['rpc', 'codegen'] },
-  { name: 'pnpm workspaces', category: '工程', side: '全栈', desc: '226 功能包 / 244 workspace 成员（rc.8）；@deepseek-ai/dsh-<name> 命名，实验包 dsh-experimental-* 前缀；peerDependencies 表达运行时依赖。', tags: ['monorepo'] },
+  { name: 'pnpm workspaces', category: '工程', side: '全栈', desc: '251 功能包 / 268 workspace 成员（0.1.2-alpha.2）；@deepseek-ai/dsh-<name> 命名，实验包 dsh-experimental-* 前缀；peerDependencies 表达运行时依赖。', tags: ['monorepo'] },
+  { name: 'Lexical', category: '框架', side: '浏览器', desc: '0.1.2 起的 Web 输入框内核：每会话一个编辑器（在 React 外创建）；引用 chip 是原子 DecoratorNode，NodeKey 即 occurrence 身份——让"字符串 diff 猜位置"类 bug 结构上不可表达。刻意不用 @lexical/react。', tags: ['editor'] },
+  { name: 'Chrome DevTools Protocol', category: '协议', side: '宿主', desc: 'Inspector 用 CDP 把宿主+客户端挂进 DevTools；Worker 是唯一 CDP 端点（宿主主线程暂停时无法投递 Debugger.resume）。', tags: ['cdp', 'experimental'] },
+  { name: 'Web Worker + MemoryVfs', category: '框架', side: '浏览器', desc: '0.1.2 实验：整棵插件树跑在 Worker 里；node:* 内建由模块代理表替换（fs 走内存 VFS，child_process 启子 Worker 当真进程）。', tags: ['browser', 'experimental'] },
+  { name: '@octokit/webhooks', category: '协议', side: '宿主', desc: 'webhook-github 用它做 HMAC-SHA256 验签——在 JSON.parse 之前、对未经改动的原始 body 验。', tags: ['webhook'] },
   { name: 'vitest + 快照回放', category: '工程', side: '全栈', desc: 'keyless snapshot：录一次真 API 之后离线回放（llm-replay/llm-mock-server）；e2e 无 key 自跳过。', tags: ['testing', 'replay'] },
   { name: 'tsdown / tsx', category: '工程', side: '宿主', desc: 'tsc 出类型、tsdown 打运行时；源码启动走 tsx ESM hook（全链路必须保持 ESM）。', tags: ['build'] },
   { name: 'JSONL + SQLite', category: '存储', side: '宿主', desc: '会话持久化双后端；storage 枢纽 json/sqlite 并列；session-query-sqlite 全文检索。rc.8：SQLite schema 17 物理打包行 + Zstandard level3（≥4KiB 才压，体积 -89.4%）。', tags: ['persistence', 'zstd'] },
@@ -314,7 +364,10 @@ export const PATTERNS = [
   { name: '微内核 + 一切皆插件', cat: 'architectural', desc: '没有特权核心：模型适配器、工具注册表、会话日志、agent 循环本身都是插件，全部可从配置替换。扩展 = 在旁边挂插件。', modules: ['cordis-vendor', 'core-spine', 'cli-boot'] },
   { name: '能力接缝三角色', cat: 'architectural', desc: 'Service Definition / Provider / Consumer 缺一不叫接缝；换一个 provider 整个产品跟着走（E2B 搬迁执行世界、六种子代理传输）。', modules: ['shell-exec', 'fs', 'sandbox', 'subagent', 'llm'] },
   { name: '事件溯源（log-first）', cat: 'architectural', desc: 'append-only 会话日志是唯一事实源；模型历史、UI、恢复、遥测全部派生；压缩用 surface replace 而非删除。rc.8 的 Agent Teams 把协作状态（花名册/信箱/任务板）也放进同一条日志。', modules: ['core-spine', 'session', 'compaction', 'agent-team'] },
-  { name: '物理/逻辑表示分离', cat: 'structural', desc: 'SQLite schema 17：磁盘上 1 行打包 1024 个 chunk（Zstd 压缩），但逻辑事件流、seq 引用、回放语义一字不变——存储优化与领域契约完全正交。存储标签是存储词汇，不进 SessionEventMap。', modules: ['session'] },
+  { name: '物理/逻辑表示分离', cat: 'structural', desc: 'SQLite schema 20：磁盘上 1 行打包 1024 个 chunk（字典 Zstd），但逻辑事件流、seq 引用、回放语义一字不变。0.1.2 把同一手法用到线上：历史页传 records 判别联合，41 万事件压成 696 条记录（浏览器折叠 4682ms→276ms），而 ChunkRowEvent 永不进 SessionEventMap。', modules: ['session', 'host-rpc'] },
+  { name: '模块层替换而非插件层分叉', cat: 'architectural', desc: '把整个 harness 搬进浏览器时，替换的是 node:* 模块身份而不是能力插件——于是 fs-local/subprocess-local/bash-sandbox/chokidar/landlock-run 全部原样运行，平台差异被压进一张 MODULE_PROXIES 表。接缝设计的终极回报。', modules: ['webworker', 'cordis-vendor'] },
+  { name: '拒绝发明身份', cat: 'structural', desc: 'Cordis 的 Context 没有 id，Inspector 就不给它造一个——改用嵌套结构表达父子关系。同理五种身份（Fiber uid / 对象引用 / BackendNodeId / NodeId / RemoteObjectId）刻意不统一，因为所有者与生命周期都不同。', modules: ['inspector'] },
+  { name: '克制的接缝', cat: 'architectural', desc: 'webhook 运行时只有两个方法、唯一内建动作是建一个普通会话，并承诺"执行记录/重试定时器/去重表/完成事件"持续缺席（有源码审计守着）。诚实地不长成任务引擎，把幂等与完成通知留给部署。', modules: ['webhook'] },
   { name: '分层配置补丁', cat: 'architectural', desc: '产品 = 空根 + bundle/profile/home/--patch 逐层补丁；每行有稳定 id，任何层可替换任意行。', modules: ['cli-boot', 'bundles', 'examples'] },
   { name: '同构插件树', cat: 'architectural', desc: '浏览器复用同一个 vendored Loader（loader.internal=浏览器模块表）；前端壳零组合决策。', modules: ['client-kernel', 'cordis-vendor'] },
   { name: 'Waterfall 中间件', cat: 'behavioral', desc: '共享 args 数组 + 尾部 next 的环绕链；调 next 委托、不调短路。全部策略点（pre-step/pre-execute/llm-stream）的底层机制。', modules: ['cordis-vendor', 'core-spine', 'interaction'] },
@@ -344,7 +397,10 @@ export const FILE_MAP = {
   'code-lsp': ['code-runtime', 'lsp'],
   'skill': ['skill'],
   'subagent': ['subagent'],
-  'agent-team': ['experimental'],
+  'agent-team': ['experimental-agent-team'],
+  'webworker': ['experimental-webworker'],
+  'inspector': ['experimental-inspector'],
+  'webhook': ['webhook'],
   'workflow': ['workflow', 'jobs'],
   'goal-plan': ['goal', 'plan', 'todo', 'schedule', 'guard'],
   'web-capability': ['web', 'spill'],
@@ -450,6 +506,93 @@ const execution: MutableToolRunContext = { ...base, arguments: deepFreeze(detach
   }
   throw error
 }` },
+  ],
+  'webworker': [
+    { title: '唯一的平台分叉：一张模块代理表', file: 'packages/experimental/webworker-runtime/src/module-proxies.ts:18', lang: 'ts',
+      note: '这段注释就是整个设计的宣言：替换的是模块身份，不是能力插件。所以 fs-local、subprocess-local、bash-sandbox、chokidar、landlock-run 全部原样运行——接缝设计的终极回报。',
+      code: `/**
+ * Module proxy table — the ONLY platform fork of the worker host. Every entry
+ * replaces a Node builtin or an external npm package; workspace and vendored
+ * modules are always mounted as-is. Keys are exact module specifiers.
+ */
+export const MODULE_PROXIES: Record<string, string> = {
+  // VFS-backed real implementations.
+  'node:fs': './node/builtin_modules/implemented/fs.ts',
+  // …分类写在路径里：implemented/ = 真语义，mock/ = 结构占位
+}` },
+    { title: '用镜像里那份 app-boot 启动整棵树', file: 'packages/experimental/webworker-runtime/src/worker-host.ts:234', lang: 'ts',
+      note: '与 07 篇浏览器复用 Loader 是同一个接缝（loader.internal）。注意 appBoot 来自镜像本身——浏览器里跑的是 Node 部署跑的同一套启动胶水。',
+      code: `const ctx = await appBoot.boot('dsh-webworker', configPath, patches, (hostCtx) => {
+  // Before any entry mounts: the Loader would otherwise fall back to the
+  // runtime's own dynamic import for every row.
+  hostCtx.loader.internal = loader.internal
+  installLogSink(hostCtx, require)
+  cmdline.provideCmdline(hostCtx, { /* --host 127.0.0.1 --no-open … */ })
+})` },
+    { title: '模拟到能骗过并发守卫：mtime 严格单增', file: 'packages/experimental/webworker-runtime/src/storage/memory.ts:457', lang: 'ts',
+      note: 'dsh-fs-local 的陈旧写入守卫依赖 ino 与 mtimeMs，而内存写入常落在同一毫秒——时间戳相等就会让陈旧覆盖溜过去。这是"模拟一个平台"和"模拟到能骗过守卫"之间的差距。',
+      code: `/** @returns A modification time strictly newer than one file node's current value. */
+private touchNode(node?: FileNode): number {
+  const previous = node?.mtimeMs
+  const now = Date.now()
+  return previous === undefined ? now : Math.max(now, previous + 1)
+}` },
+  ],
+  'inspector': [
+    { title: 'ctx.inspector 故意与 CDP 无关', file: 'packages/experimental/inspector/src/shared/service.ts:8', lang: 'ts',
+      note: '只有两个成员，宿主与客户端两个面拿到同一个工厂产出的同一种服务。这个 CDP-无关的 reader 已进 tool-cordis 的 API 目录——模型写的动态插件能读它正在改的那棵插件树。',
+      code: `/** Shared Host/Client service façade over the realm's source publisher. */
+export interface InspectorService {
+  /** Publish one JSON observation without waiting for Worker delivery. */
+  publish(topic: string, payload: InspectorJsonValue, monotonicMs?: number): void
+
+  /** Read-only Cordis topology queries independent of CDP sessions. */
+  readonly cordis: CordisRuntimeTreeReader
+}` },
+    { title: 'Cordis 树的发现过程（一份内部结构教材）', file: 'packages/experimental/inspector/src/shared/cordis/collector.ts:149', lang: 'ts',
+      note: '入口有三类：根、注册表里每个活 Fiber、每个事件钩子的 owner Context。同一份采集器编译进宿主与客户端两个面，各自对自己的 ctx.root 实例化——没有第二套分类实现。',
+      code: `const rootInfo = ensure(root) as ContextInfo
+for (const runtime of root.registry.values()) {
+  for (const fiber of runtime.fibers) {
+    if (fiber.uid === null) continue      // 跳过已释放
+    ensure(fiber.parent); ensure(fiber.ctx)
+  }
+}
+for (const key of Reflect.ownKeys(root.events._hooks)) {
+  for (const hook of root.events._hooks[key] ?? []) ensure(hook.ctx)
+}` },
+  ],
+  'webhook': [
+    { title: '验签在解析之前', file: 'packages/webhook/webhook-github/src/handler.ts:91', lang: 'ts',
+      note: '顺序就是安全：读有界原始 body → 逐请求解析密钥（轮换下次投递即生效）→ HMAC 验签 → 才 JSON.parse。Octokit 的验签异常被刻意吞掉，因为"它不携带对发送方安全或有用的响应细节"。',
+      code: `const body = await readBoundedUtf8Body(request, config.maxBodyBytes)
+const signature = requiredHeader(request, 'x-hub-signature-256')
+const credential = await ctx.credentials.resolve(config.secretEnv)
+if (credential === undefined || credential.value === '') {
+  throw new WebhookHttpError(503, 'GitHub webhook secret is unavailable')
+}
+let verified = false
+try {
+  verified = await new Webhooks({ secret: credential.value }).verify(body, signature)
+} catch { /* 不回显任何细节 */ }
+if (!verified) throw new WebhookHttpError(401, 'invalid webhook signature')
+const payload = parsePayload(body)   // ← 只有验签通过才解析` },
+    { title: '只隔离 webServer 的 isolate 实战', file: 'apps/cli/config/examples/github-review/cordis.yml:17', lang: 'yaml',
+      note: '01 篇 isolate 领域机制最好的实战范例：适配器仍从父领域继承 credentials 与 webhookRuntime，却拿到自己的监听端口——于是暴露 ingress 不必暴露 /api、WebSocket 和前端文件。',
+      code: `- id: github-webhook-ingress
+  name: cordis:group
+  group: true
+  isolate:
+    webServer: true          # ← 只隔离 webServer 领域
+  config:
+    - id: github-webhook-server
+      name: '@deepseek-ai/dsh-host-webserver'
+      config:
+        host: '127.0.0.1'
+        port: !!js Number(process.env.DSH_GITHUB_WEBHOOK_PORT ?? 3081)
+    - id: github-webhook-adapter
+      name: '@deepseek-ai/dsh-webhook-github'
+      config: { source: primary-github, path: /github, secretEnv: DSH_GITHUB_WEBHOOK_SECRET }` },
   ],
   'agent-team': [
     { title: '四种 team/* 事件：协作也是事件溯源的', file: 'packages/experimental/agent-team/src/types.ts:203', lang: 'ts',
