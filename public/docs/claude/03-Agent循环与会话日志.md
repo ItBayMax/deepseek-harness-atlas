@@ -211,3 +211,51 @@ rc.8 时宿主 reader 可以容忍 `sessionProjections` 注册表或某个键缺
 
 - **UI/SDK 消费 `session/event`**（可回放的事实流），**live 协调走 `agent/*`**（inbox/status/pre-step/request/turn-stopping）——两个域职责分明。
 - 子代理（subagent）、goal 续跑、Ralph 循环都不改这个循环——它们要么造新 agent，要么通过 `followup()`/事件监听在外面"包"一层。**"新行为 = 挂插件，永不改循环"** 是整个仓库的第一架构纪律。
+
+
+## 📌 0.2.0 增量（0.1.2-alpha.2 → 0.2.0-rc.2，`0a53fb5` → `639ed01`）
+
+本篇讲的 append-only 日志、"模型可见 ⟺ 已记录"、SurfaceOp、`deriveMessages()` 等机制**仍然成立**。
+但**格式本身从 v0 走到了 v4**。完整机制见新增的
+[12 会话格式版本化与持久化治理](12-会话格式版本化与持久化治理.md)，这里只列必须改的事实。
+
+### 被推翻的事实（原地更正）
+
+| 旧表述（0.1.2） | 0.2.0 事实 | 依据 |
+|---|---|---|
+| `SESSION_FORMAT_VERSION = 0`，"无兼容承诺" | **= 4**，四条相邻迁移边已交付 | `packages/core/session/src/types.ts:89` |
+| 落盘 `session.jsonl.zstd` | **`session.v4.jsonl.zstd`**；无 `.vN` 后缀专指 generation 0 | `session-format/src/filename.ts:14-18` |
+| 存储行是**打包 chunk rows**，字段 `seq0`/`time0` | **顶层打包行不存在了**；`seq0` 只活在冻结的 v0 解码器里 | `session-format-v1-to-v2/src/codec.ts:21-22` |
+| 成员数组 `texts`/`args`、间隔数组 `dt` 在行上 | **字段名保留**，搬进 `assistant/message.data.stream[]` | `packages/llm/llm/src/assistant-stream.ts:20-47` |
+| 有 jsonl 和 sqlite 两种持久化 | **只有 JSONL 一种 first-party 实现**，sqlite 包已删且**无自动迁移** | `simplification/2026-08-30-jsonl-only-session-persistence` |
+| 会话投影缓存独立于格式版本 | cache 行现在把 fold **绑定到会话头的格式版本** | 架构 Note |
+
+### 当前物理行形态
+
+```ts
+// packages/session/session-format-v1-to-v2/src/codec.ts:21-22
+const EVENT_REQUIRED = ['type', 'seq', 'time', 'data'] as const
+const EVENT_OPTIONAL = ['ignorable', 'sourceEventSeqs', 'surfaceOp'] as const
+```
+
+这个 codec 被 v2→v3 再导出、v3→v4 导入，**就是今天的编码器**。
+
+### 事件词表：51 → 59
+
+**新增 11 个**：`assistant/attempt`、`deliverables/presented`、`developer/message`、
+`feedback/message-delete`、`feedback/message-put`、`image/offload`、`subagent/catalog`、
+`system/message`、`tool/ptc-dispatch`、`tool/ptc-dispatch-start`、`workspace/changes`
+
+**删除 3 个**：`assistant/chunk`、`tool/code-dispatch`、`tool/code-dispatch-start`
+
+对应关系值得记：`assistant/chunk` 删除 + `assistant/attempt` 新增 = **v1→v2 的折叠**；
+`tool/code-dispatch*` → `tool/ptc-dispatch*` = **v2→v3 的 PTC 词表更名**（见 [04](04-工具系统与执行管线.md)）；
+`system/message` = **v2→v3 系统提示词提升为消息**；`subagent/catalog` = **v3→v4 父目录补全**。
+
+### 新增投影单元：`session-turn-outline`
+
+在会话投影注册表上注册 `turnOutline` 键，提供**涵盖完整会话**的轮次大纲——
+让客户端能导航**尚未加载**的轮次，并从"载入所选轮次所需的精确事件序号"向后分页。
+
+两处讲究：**锚定 `turn/start` 而非提示词 `user/message`**（它的 seq 就是跳转的载入目标）；
+提示词**只**从带人类 `user` 来源的消息填充，**注入的上下文与工具结果绝不进入导航**。

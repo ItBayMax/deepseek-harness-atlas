@@ -248,3 +248,89 @@ typed 命名空间 + 中英字典对等只能证明字典**完整**，不能证�
 ## 学习建议
 
 想理解"浏览器插件"怎么写：从 `packages/host/plugin-inventory` 入手（最干净的 Remote-only 示例：浏览器检视宿主插件树），再看 `ui-todo` 类小 UI 插件，最后读 `ui-tool` 的子 slot 模式。
+
+
+## 📌 0.2.0 增量（0.1.2-alpha.2 → 0.2.0-rc.2，`0a53fb5` → `639ed01`）
+
+本轮客户端新增 **19 个包**，是工程量最大的一块。slot 机制**仍然成立**，
+但右侧边栏引入了一套**额外的注册阶段**。
+
+### ✅ `conversation.view` 插槽仍然有效
+
+三处证据：类型声明 `ui-conversation/src/client/contract/slots.ts:185`、
+运行时声明 `apply.ts:354-358`、渲染点 `skeleton/DefaultConversationViews.tsx:39`。
+**依赖这个插槽的插件不会因为改名而挂。**
+
+⚠️ 但有两处行为变化：
+
+1. **Trajectory 标签页默认不可见**，被开发者工具开关门控：
+   ```ts
+   // packages/client/ui-conversation/src/client/apply.ts:185
+   if (!ctx.configForms.developerTools.enabled.getSnapshot() && entry.options.id === TRAJECTORY_VIEW_ID) continue
+   ```
+2. **`id` 现在是硬性要求**，无 `id` 的 entry 会被跳过；`label` 可选，缺省回退为 `id`。
+
+### 右侧边栏：两阶段注册（新机制）
+
+这是本轮客户端最大的新扩展点。它**不是另起一套框架**，而是"专用注册表 + 既有 slot"的混合：
+
+| 阶段 | 机制 | 注册什么 |
+|---|---|---|
+| **Stage 1** | `ctx.sidebarRightTabs.register(definition)` —— **全新的专用注册表** | tab **类型**的静态元数据：`id` / `kind` / `patterns` / `priority` / `title` / `guide` |
+| **Stage 2** | `ctx.slots.inject('sidebar.right.pane.tab', ...)` —— **就是熟悉的 slot** | tab 的 **body 组件**（keyed，key = Stage 1 的 `id`） |
+
+设计约束写在 Note 里（`2026-09-05-sidebar-tab-types-and-navigation`）：
+> "Dynamic client plugins may not import runtime values from one another…
+> And the Web client already has one component model, the Slot system;
+> **a second one for tabs would be a parallel framework to learn and maintain.**"
+
+**对我们写插件最重要的两点**：
+
+- **优先级带**：`priority` 默认就是 `'extension'`，也就是**外部插件的默认优先级最高**，
+  天然压过所有官方 viewer（VS Code editor-resolver 同款规则）。三档：`extension`(3) > `builtin`(2) > `fallback`(1)。
+- **面板提供者是开放角色**，不限于 `ui-sidebar-*` 前缀——`ui-deliverables` / `ui-plan` /
+  `ui-schedule` / `ui-subagent` 也都注册了 tab 类型。
+
+最小可行骨架：
+
+```ts
+export const inject = ['sidebarRightTabs', 'slots']
+
+export function apply(ctx: Context): void {
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: '@acme/dsh-client-ui-xxx',   // 全局唯一，也是 Stage 2 的 key
+    kind: 'xxx',                     // openTab 用的名字；可与 builtin 同名以接管
+    patterns: ['*.foo'],
+    title: address => address.slice(address.lastIndexOf('/') + 1),
+  }), 'xxx type')
+
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+    { name: 'sidebar.right.pane.tab', key: '@acme/dsh-client-ui-xxx' }, XxxBody,
+  )), 'xxx body')
+}
+```
+
+> ⚠️ **不要直接依赖 `ui-dockkit`**。它是侧边栏的内部布局引擎，README 自述
+> *"Internal engine … not a stable API"*，`LayoutState`/`LayoutOp`/planners 可任意版本变更，
+> 且**不出现在任何 service 接口里**。
+
+### 设置页拆成伴生包
+
+原先挤在一个包里的四个官方设置页拆成了独立伴生包（`ui-settings-shell` / `agent-loop` /
+`subagent` / `web-search` / `account` / `session-log`）。注册门控规则是 **`whileServed`**——
+页面"**恰好在 Host 提供该 namespace 期间**存在"。
+
+> 📌 一个上游文档 bug：Note 里写的是 `ctx.settingsScope`，
+> 但**实际服务名是 `ctx.configForms`**（`config-form.ts:266`）。**写插件请以 `configForms` 为准。**
+
+### 新增：交付物（deliverables）
+
+两条互补的线，核心是**"声明 + 观测"，不是"产物托管"**：
+
+- `tool-present` = **模型主动声明**"我交付了这些文件"，写 log-only 事件 `deliverables/presented`
+- `workspace-changes` = **系统被动观测**：turn 前后各做一次 git working-tree 快照，
+  git 覆盖不到的路径用文件工具的编辑前后捕获补齐
+
+两者都只记录**指针（路径）和元数据**，从不复制/托管文件字节。
+`workspace-changes` 的 summary **不进会话日志**，只活在 Host 内存里——
+所以 Host 重启后重开会话，早先 turn 的 changed-files 卡片就没了。

@@ -117,3 +117,38 @@ Team 工具还是**显式挂载**的：默认组合不含它，delegation 策略
 ## 已知边界（官方自己列的）
 
 单进程单 checkout（无 worktree/合并语义）；花名册扁平不可嵌套不可改名；任务 owner 不因 idle/退出自动释放；无浏览器端任务板 UI；不自主启用。配额默认：8 成员 / 256 任务 / 每成员 64 条待投递 / 单条消息 64 KiB。
+
+
+## 📌 0.2.0 增量（0.1.2-alpha.2 → 0.2.0-rc.2，`0a53fb5` → `639ed01`）
+
+### ⚠️ 升级会导致启动失败（必读）
+
+`experimental/agent-team-web-profile` 这个包**已被删除**，两个 bundle 合并成一个。
+Note（`2026-09-18-agent-teams-single-bundle`）原话：
+
+> "Existing profiles that select the removed Web bundle have an upgrade compatibility gap:
+> **startup fails** when that package cannot be resolved. Bundle composition provides
+> **no automatic rewrite** of those saved selections."
+
+**即：任何 0.1.x 时期勾选过 `agent-team-web-profile` 的 profile，升到 0.2.0 会启动失败，
+且没有自动迁移。** 升级前需要手工改 profile 的 bundle 列表。
+
+### 现状：活着，但是可选 bundle、默认关闭
+
+`@deepseek-ai/dsh-experimental-agent-team-profile` **一个 bundle 同时携带** Team service、tools
+和浏览器 UI。patch 仍保留 `agent-team` / `tool-agent-team` / `ui-agent-team` 三个 row id，
+所以仍可单独 patch 配置。合并的动机是体验问题——**"一个特性要用户勾两个开关"**。
+
+### 相关删除：`subagent/tool-subagent-report`
+
+该包被"相邻 Agent Steer 消息"统一了：`report` schema、`tool:report` prompt section、
+`reportDelivery` 配置、report 专属 message source **全部不存在**。
+能力折叠进统一的 `sendMessage()` + 相邻 `agent_id` + 固定 Steer。
+
+> 注意：会话格式里 `subagent-report` 这个 **source kind 字符串仍保留**于各条迁移代码中，
+> 那是历史日志兼容，**不是活能力**。
+
+### 新增：`subagent/catalog` 事件
+
+v3→v4 迁移新增了**父目录补全**——按直属子会话证据追加缺失的 `subagent/catalog` 记录。
+详见 [12 会话格式版本化与持久化治理](12-会话格式版本化与持久化治理.md)。

@@ -19,7 +19,7 @@ export const LAYERS = [
 export const MODULES = [
   { id: 'cli-boot', side: '宿主（Node 进程）', layer: 'entry', name: 'cli + boot', title: 'dsh 命令行入口与启动流水线',
     doc: 'claude/01-架构总览与启动组合.md',
-    oneLiner: '从 `dsh web` 一条命令到插件树：分层 .env → composeProfile 叠补丁 → boot 挂 Loader → fail-loud 巡检 → 用户补丁热监听。',
+    oneLiner: '从 `dsh web` 一条命令到插件树：分层 .env → composeProfile 叠补丁 → boot 挂 Loader → 启动巡检 → 用户补丁热监听。**0.2.0 起巡检只对 7 个必需条目 fail-loud**，其余失败只告警。',
     keyClasses: ['runProfile()', 'composeProfile()', 'boot()', 'mountRootInclude()', 'loadLayeredEnv()'],
     patterns: ['组合根', '分层配置补丁'], deps: ['bundles', 'cordis-vendor'],
     tags: ['entrypoint', 'profile', 'patch-layers'],
@@ -217,9 +217,9 @@ export const MODULES = [
     tags: ['self-modification', 'dynamic-plugin'],
     risks: ['effect 树保证可卸载是自修改安全的前提——任何注册没有 disposer 都会破坏这个保证'] },
 
-  { id: 'examples', side: '宿主（Node 进程）', layer: 'support', name: 'examples', title: '可运行示例（叶子树与补丁覆盖）',
+  { id: 'examples', side: '宿主（Node 进程）', layer: 'support', name: 'examples', title: 'snapshots 录制语料（原 examples）',
     doc: 'official/cookbook/extension-cookbook.zh.md',
-    oneLiner: '两类：独立叶子树（headless/acp/jsonrpc-agent 完整 cordis.yml）与 --patch 覆盖（web-cordis/web-schedule/mcp-memory）；配 cordis.snapshot.yml 支持无 key 回放。',
+    oneLiner: '0.2.0 起 examples/ 与 packages/examples 均已删除，取而代之的是 snapshots/ 录制语料（1278 个文件）——会话格式迁移、LLM 回放、快照测试都以它为真源。',
     keyClasses: ['examples/*/cordis.yml', 'agent-spine-demo', 'acp-demo', 'jsonrpc-demo'],
     patterns: ['配置即组合'], deps: ['bundles', 'cli-boot'],
     tags: ['examples', 'snapshot'],
@@ -248,6 +248,118 @@ export const MODULES = [
     patterns: ['事件折叠', '声明合并扩展', 'keyed slot'], deps: ['client-kernel'],
     tags: ['chat', 'ui-plugins', 'react'],
     risks: ['未注册的节点 kind 渲染 JSON 兜底而不是崩——加新聊天行是挂插件不是改内建', '每节点一个 seat：assistant 增量不重渲染兄弟节点', '⚠️ 0.1.2 起给工具定义宿主侧 presentCall/presentResult 不再能得到 Web 卡片——必须在客户端插件注册 tool.call.toolview keyed renderer', 'Lexical chip 的 isKeyboardSelectable() 必须为 false，否则方向键在 chip 边缘死锁'] },
+  {
+    id: 'session-format',
+    side: '宿主（Node 进程）',
+    layer: 'data',
+    name: 'session-format 迁移链',
+    title: '会话格式版本化与持久化治理',
+    doc: 'claude/12-会话格式版本化与持久化治理.md',
+    oneLiner: '0.2.0 把 SESSION_FORMAT_VERSION 从 0 推到 4：四条相邻迁移边 + 有状态流式 Stage + persistence-changes 机器化兼容性治理。',
+    keyClasses: ['SESSION_FORMAT_VERSION', 'SessionFormatEventRun', 'SessionFormatMigrationStage', 'CompiledSessionFormatChain', 'sessionFormatCatalogOptions'],
+    patterns: ['相邻版本迁移', '物理/逻辑表示分离', '机器化兼容性治理'],
+    deps: ['session'],
+    tags: ['0.2.0 新增', '持久化', '迁移'],
+    risks: ['v0/v1 边只接受冻结的第一方事件清单，未知外部插件事件会让迁移失败（含 ignorable）', '无 downgrade、无自动 fallback；v3 读取方拒绝更新的 generation'],
+  },
+  {
+    id: 'ptc-runtime',
+    side: '宿主（Node 进程）',
+    layer: 'exec',
+    name: 'ptc-runtime',
+    title: 'PTC 运行时（取代 code-runtime）',
+    doc: 'claude/04-工具系统与执行管线.md',
+    oneLiner: '把 PTC 从 worker thread 换成「OS 沙箱约束的独立进程」——因为 worker 只隔离 JS 状态，模型可直接 import(node:fs) 绕过工具策略。',
+    keyClasses: ['PtcRuntime', 'resolve()', 'run()', 'NodePtcRuntime', 'PtcRunSandbox'],
+    patterns: ['能力接缝三角色', '两段式解析/执行', 'fail closed'],
+    deps: ['sandbox', 'shell-exec'],
+    tags: ['0.2.0 新增', '沙箱', '重构'],
+    risks: ['isolation: process 不声明多租户隔离', 'elapsed deadline 不是 process-tree CPU 预算', '保留的历史名 worker-exit 现在指「执行基质死亡」，不再代表 worker thread'],
+  },
+  {
+    id: 'ssh-remote',
+    side: '宿主（Node 进程）',
+    layer: 'exec',
+    name: 'ssh provider family',
+    title: 'SSH 远程执行（取代 E2B）',
+    doc: 'claude/14-远程执行与账号体系.md',
+    oneLiner: '1 个 Service + 3 个互不依赖的 Provider：ctx.ssh 拥有连接与传输，fs/subprocess/sandbox 三者只靠 request() 与 connectStream() 工作。',
+    keyClasses: ['SshConnection', 'ctx.ssh.request()', 'ctx.ssh.connectStream()', 'SshSandboxProvider'],
+    patterns: ['能力接缝三角色', '星形 provider 分层', '无 local/remote 标志'],
+    deps: ['fs', 'shell-exec', 'sandbox'],
+    tags: ['0.2.0 新增', '远程执行'],
+    risks: ['未在任何出厂 profile 挂载，只能自定义组合使用', '要求两端都是 POSIX，本地是 Windows 直接抛错', '连接丢失不重连不重放，被中断操作的结果必须如实上报'],
+  },
+  {
+    id: 'modality',
+    side: '宿主（Node 进程）',
+    layer: 'feature',
+    name: 'browser-use / computer-use / 语音 / office',
+    title: '新交互模态与多提供者接缝',
+    doc: 'claude/13-新交互模态与多提供者接缝.md',
+    oneLiner: '四条新模态通道；ctx.browserUse 只有 32 行——接缝可以小到只做「排他占坑」，因为当前没有消费者需要在 provider 之间可替换。',
+    keyClasses: ['BrowserUseRegistry', 'ComputerUseRegistry', 'ctx.speechToText', 'ctx.speechController', 'ctx.officeToPdf'],
+    patterns: ['Name-Only Registry', '共享运行时库非 provider', '用看不见代替被拒绝'],
+    deps: ['interaction', 'web-capability'],
+    tags: ['0.2.0 新增', '接缝范本'],
+    risks: ['除 office-to-pdf 外默认全不挂载', '未接 ctx.approval 审批接缝，靠结构性防御', '取消无法撤销已投递的浏览器/桌面动作'],
+  },
+  {
+    id: 'account',
+    side: '宿主（Node 进程）',
+    layer: 'model',
+    name: 'deepseek-account',
+    title: '账号体系与双路由',
+    doc: 'claude/14-远程执行与账号体系.md',
+    oneLiner: 'deepseek-official（裸 key）与 deepseek-account（登录态）是两条并行路由，共享协议库但互不回退；llm-deepseek 因此从插件降级为协议库。',
+    keyClasses: ['DeepSeekAccount', 'AccountController', 'registerDeepSeekProvider', 'GrantRecord'],
+    patterns: ['能力接缝三角色', '凭据 Host-only'],
+    deps: ['llm', 'storage-config'],
+    tags: ['0.2.0 新增', '认证'],
+    risks: ['账号 token 无过期/刷新流，失效只能被动触发', '登出的远程吊销最多重试 5 次且不持久化——已登出不等于远端已失效', '账号 UI 是 Desktop-only'],
+  },
+  {
+    id: 'plugin-lifecycle',
+    side: '宿主（Node 进程）',
+    layer: 'entry',
+    name: 'boot / plugin-manager / hmr',
+    title: '插件生命周期与运行时管理',
+    doc: 'claude/15-插件生命周期与可观测性.md',
+    oneLiner: '把同一套装配搬进运行时：ctx.pluginManager 可运行时装卸启停，与 CLI 共用实现模块；有 HMR 时首装新 bundle 也能热生效。',
+    keyClasses: ['PluginManager', 'ctx.hmr', 'ctx.configEditor', 'ctx.profileContext', 'auditStartupEntries()'],
+    patterns: ['组合根', '分层配置补丁', 'volatile 配置引用'],
+    deps: ['cli-boot', 'bundles'],
+    tags: ['0.2.0 新增', '插件开发'],
+    risks: ['fail-loud 已松动：只有 7 个必需条目能中止启动', 'Loader 非事务、失败不回滚', '替换已存在的依赖仍需重启（需要新的进程代）'],
+  },
+  {
+    id: 'telemetry',
+    side: '宿主（Node 进程）',
+    layer: 'support',
+    name: 'otel / product-telemetry',
+    title: '可观测性与隐私面',
+    doc: 'claude/15-插件生命周期与可观测性.md',
+    oneLiner: 'ctx.otel 是无策略的传输工厂，只导出 logs（不是分布式追踪）；base bundle 默认挂 session 遥测，FEEDBACK_ONLY 触发式上传。',
+    keyClasses: ['ctx.otel', 'createEventReporter()', 'createSessionLogReporter()', 'ctx.productTelemetry'],
+    patterns: ['能力接缝三角色', '默认关闭靠依赖图'],
+    deps: ['session', 'host-rpc'],
+    tags: ['0.2.0 新增', '隐私'],
+    risks: ['未配脱敏规则时导出可能包含消息文本、工具参数与结果、工作区路径', 'Desktop 产品分析默认开启且无面向用户的开关', '退出开关是 DSH_TELEMETRY_DISABLED（任意非空值）'],
+  },
+  {
+    id: 'sidebar-right',
+    side: '浏览器（Web 客户端）',
+    layer: 'fe-ui',
+    name: 'ui-sidebar-right',
+    title: '右侧边栏与两阶段注册',
+    doc: 'claude/07-Web客户端与外部协议.md',
+    oneLiner: 'Stage 1 用专用注册表 ctx.sidebarRightTabs 注册 tab 类型，Stage 2 才用熟悉的 slot 注册 body——刻意不造第二套组件模型。',
+    keyClasses: ['SidebarRightTabRegistry', 'ctx.sidebarRight', 'sidebar.right.pane.tab', 'useTabInfo()'],
+    patterns: ['插槽与 keyed 注册', '优先级带覆盖'],
+    deps: ['client-ui', 'client-kernel'],
+    tags: ['0.2.0 新增', '客户端扩展点'],
+    risks: ['ui-dockkit 是内部引擎，README 自述 not a stable API，不应直接依赖', 'Trajectory 标签页默认被开发者工具开关隐藏'],
+  },
 ];
 
 export const RELATIONS = [
@@ -265,6 +377,14 @@ export const RELATIONS = [
   { from: 'webworker', to: 'cordis-vendor', type: 'calls', label: 'loader.internal', desc: '浏览器 Worker 里复用同一个 Loader，模块表替换 node:* 内建，插件层零改动。' },
   { from: 'webworker', to: 'fs', type: 'data-flow', label: 'MemoryVfs', desc: 'fs-local 原样运行在 VFS 上；mtime 严格单增以骗过陈旧写入守卫。' },
   { from: 'inspector', to: 'extensions', type: 'data-flow', label: 'ctx.inspector 进 API 目录', desc: 'tool-cordis 把 ctx.inspector 教给模型：模型写的动态插件能发布观测、读它正在改的插件树。' },
+  { from: 'ptc-runtime', to: 'sandbox', type: 'calls', label: '同一 provider', desc: 'PTC 用与 Bash 完全相同的 ctx.sandbox.confine 约束进程启动，约束不可用则 fail closed。' },
+  { from: 'ssh-remote', to: 'sandbox', type: 'provides', label: '远程 provider', desc: 'sandbox-ssh 把 confine 请求转发到远端 helper，与 sandbox-local 是同层平行 provider。' },
+  { from: 'session-format', to: 'session', type: 'calls', label: '读时迁移', desc: '恢复会话时按 v0→v4 链跑有状态 Stage，只读打开不写盘、写入打开才发布 generation。' },
+  { from: 'plugin-lifecycle', to: 'bundles', type: 'calls', label: '运行时重组', desc: 'reconcileProfilePatches 把重新读取的 patch 列表打进正在跑的 Loader 树。' },
+  { from: 'account', to: 'llm', type: 'provides', label: '双路由', desc: 'llm-deepseek-account 与 llm-deepseek-api-key 各注册一条路由，共享 llm-deepseek 协议库。' },
+  { from: 'modality', to: 'interaction', type: 'calls', label: '审批兜底', desc: '浏览器/桌面工具未接 ctx.approval，审批走通用的 tools/pre-execute waterfall。' },
+  { from: 'telemetry', to: 'session', type: 'observes', label: 'feedback 触发', desc: '只有用户显式提交 feedback 才释放一段有界的会话前缀。' },
+  { from: 'sidebar-right', to: 'client-ui', type: 'calls', label: '两阶段注册', desc: 'Stage 2 的 body 注册复用既有 slot 机制，刻意不造第二套组件模型。' },
 ];
 
 export const DATAFLOWS = [
@@ -292,7 +412,7 @@ export const DATAFLOWS = [
     { moduleId: 'bundles', label: '按序叠补丁：base → web-app → profile patch → 家目录 patch → --patch 覆盖', type: 'process' },
     { moduleId: 'cordis-vendor', label: 'boot()：new Context → 挂 Loader → mountRootInclude（一个 include 根 + 全部补丁）', type: 'process' },
     { moduleId: 'cordis-vendor', label: 'Fiber 纪元机制按 inject 依赖自动排序激活 130+ 包', type: 'process' },
-    { moduleId: 'cli-boot', label: 'loader.await() → assertEntriesActivated：卡在 waiting for <service> 的行 fail-loud', type: 'decision' },
+    { moduleId: 'cli-boot', label: 'loader.await() → auditStartupEntries：7 个必需条目失败才中止，其余只 warn（0.2.0 变更）', type: 'decision' },
     { moduleId: 'bundles', label: '会话创建时 agent-presets 再按 preset 组合 agent 面插件树（isolate 领域）', type: 'output' },
   ]},
   { id: 'browser-boot', name: '浏览器引导与 RPC 通路', desc: '浏览器里跑同一个 Loader；哪些插件进浏览器由宿主 yml 决定。', steps: [
@@ -381,6 +501,12 @@ export const PATTERNS = [
   { name: '引用-值分离（凭证）', cat: 'structural', desc: '配置携带 secret 引用、provider 持值、消费者按操作解析——轮换即时生效且值不进日志。', modules: ['storage-config'] },
   { name: '编译期反射 RPC（Typert）', cat: 'structural', desc: '@Remote 装饰器 + ts.Program 分析生成调用描述符与 Zod 编解码；复杂宿主对象经 Lookup 翻译（Agent→agentId），不过线。', modules: ['host-rpc'] },
   { name: 'CQRS 式投影', cat: 'structural', desc: '投影单元把事件流折成 UI 状态并缓存检查点；冷读=缓存行+尾部回放，会话列表不加载全日志。', modules: ['session', 'client-ui'] },
+  { name: 'Name-Only Registry', cat: 'architectural', desc: '当有 N 个后端但还没有消费者需要在它们之间可替换时，接缝只做「排他占坑」，不定义共享操作 API。ctx.browserUse 全部只有 32 行。配套四条约定：同名也拒、返回 effect disposer、清理期间保留注册、用一个 grouped effect 保证先停工具再释放。', modules: ['modality'] },
+  { name: '机器化兼容性治理', cat: 'process', desc: '把「这算不算破坏性变更」从人肉 review 变成机器分类 + 人工举证：每个持久化根一条链表（previous → after 摘要哈希），固定兼容性规则表推断最低决策，--decision 是受检查的断言而非声明。比较完全本地化，不依赖 Git 引用或网络。', modules: ['session-format'] },
+  { name: '有状态流式 Stage 迁移', cat: 'structural', desc: '相邻版本迁移本来就有状态，就把它显式建模成 Stage：每次恢复新建、绝不跨会话共享，通过同步 emitEvent/emitRun 直连下一级。配合惰性 expand() 让打包 run 直达折叠边，把 116MB 日志从 OOM 救回 6.2 秒。', modules: ['session-format'] },
+  { name: '默认关闭靠依赖图', cat: 'process', desc: '高风险能力的「默认不启用」不写在 README 里，而是变成依赖图上的机器可验证约束：正式包禁止在任何依赖字段点名 experimental 包，CI 连传递安装、运行时 import、已发布组合一起查。文档会腐烂，CI 不会。', modules: ['modality', 'plugin-lifecycle'] },
+  { name: 'volatile 配置引用', cat: 'structural', desc: 'schema 可返回 Volatile<T>；Loader 对只涉及 volatile 字段的配置变更直接写进运行中的引用、不重启 fiber，并发 loader/volatile-update 通知宿主。普通字段变更仍走重挂生命周期。', modules: ['cordis-vendor', 'plugin-lifecycle'] },
+  { name: '用看不见代替被拒绝', cat: 'behavioral', desc: '能力对某会话不可用时，不是调用后报错，而是三层组合：ctx.tools.restrict 摘掉目录项 + 拦 system-prompt/assemble 删掉段落 + tools/execute 兜底。对模型而言该能力从未存在，不浪费 token 重试。', modules: ['modality'] },
 ];
 
 // 模块 id → 清单 JSON 名列表（文件数 = 各清单长度之和）。清单由 gen-inventory.mjs 生成。
@@ -410,14 +536,145 @@ export const FILE_MAP = {
   'host-rpc': ['host', 'api', 'typert'],
   'sdk-protocols': ['sdk', 'acp', 'mcp', 'python'],
   'extensions': ['extensions'],
-  'examples': ['examples-root', 'examples-pkg'],
+  'examples': ['snapshots'],
   'support': ['util', 'test-support', 'runtime-diagnostics'],
   'client-kernel': ['client-kernel', 'apps-web'],
   'client-ui': ['client-ui'],
+  'session-format': ['session-pkg'],
+  'ptc-runtime': ['ptc-runtime'],
+  'ssh-remote': ['ssh'],
+  modality: ['browser-use', 'computer-use', 'document'],
+  account: ['credentials', 'llm'],
+  'plugin-lifecycle': ['boot'],
+  telemetry: ['telemetry'],
+  'sidebar-right': ['client-ui'],
 };
 
 // 模块 id → 关键源码片段（真实文件、真实代码；供"关键源码"标签页渲染）。
 export const SNIPPETS = {
+  'session-format': [
+    {
+      title: '版本常量与「何时递增」的判据',
+      file: 'packages/core/session/src/types.ts:74-89',
+      lang: 'ts',
+      note: '四条规则值得单独记：单调整数无 major/minor；判据挂在写入器而非读取器；「能解析不报错」不等于正确；拿不准就递增——因为代价不对称，漏一次递增会让旧 runtime 静默读错新日志。',
+      code: `/**
+ * The version is a single monotonic integer with no major/minor split. Whether
+ * a bump is needed is decided by what the WRITER emits, never by what a newer
+ * reader can accept: bump exactly when an older runtime could no longer handle
+ * a new log with full semantic correctness ("parses without error" is not
+ * correctness — silently skipping content that shapes reconstruction is a
+ * wrong read). Only structural changes reach that bar: the header shape, the
+ * SessionEvent envelope, core event semantics, or the surface mechanism.
+ * Adding an ordinary event type does not bump — the per-event
+ * ignorable guard covers vocabulary growth instead. When in doubt, bump.
+ */
+export const SESSION_FORMAT_VERSION = 4` },
+    {
+      title: '节奏数据搬家：dt 还在，只是换了位置',
+      file: 'packages/llm/llm/src/assistant-stream.ts:20-47',
+      lang: 'ts',
+      note: 'time0/index/dt/texts/args 字段名一个没变，但从「顶层物理行 + data 子对象」搬进了 assistant/message.data.stream[]。第 4 个变体 chunk 承载 accumulator 从不打包的非 delta chunk。任何直接解析 session.jsonl 的工具都要按这个改读法。',
+      code: `export type AssistantStreamRecord =
+  | {
+    readonly type: 'text-chunks'
+    readonly time0: number
+    readonly index: number
+    readonly dt: readonly number[]
+    readonly texts: readonly string[]
+  }
+  | { readonly type: 'reasoning-chunks'; /* 同上 */ }
+  | {
+    readonly type: 'tool-call-chunks'
+    readonly time0: number
+    readonly index: number
+    readonly dt: readonly number[]
+    readonly id: ToolCallId
+    readonly name?: string
+    readonly args: readonly string[]
+  }
+  | { readonly type: 'chunk'; readonly time: number; readonly chunk: StreamChunk }` },
+  ],
+  'plugin-lifecycle': [
+    {
+      title: 'fail-loud 的边界：只有 7 个必需条目能中止启动',
+      file: 'packages/boot/app-boot/src/index.ts:746-754, 930-938',
+      lang: 'ts',
+      note: '0.2.0 最重要的行为变化。第 938 行就是判决：非必需条目的失败只 warn()，函数正常返回、启动继续。配套的 nontransactional-loader 决策还明确了「失败不回滚」——插件激活失败会把新 options 和 failed fiber 留在树里。',
+      code: `const requiredStartupEntryIds = new Set<string>([
+  'agent-loop', 'webserver', 'modules', 'connection',
+  'headless-runner', 'acp', 'sdk-jsonrpc-server',
+])
+
+// ...
+
+export async function auditStartupEntries(ctx, binName, warn = ...): Promise<void> {
+  const failures = await inactiveEntries(ctx)
+  const required = new Set(failures.filter(({ entry }) => entry === bootstrapIncludes.get(ctx)
+    || requiredStartupEntryIds.has(entry.options.id)).map(({ entry }) => entry))
+  if (required.size > 0) {
+    throw new StartupError(startupDiagnostic(binName, failures, required), ...)
+  }
+  if (failures.length > 0) warn(activationDiagnostic(binName, failures))
+}` },
+  ],
+  'ptc-runtime': [
+    {
+      title: '沙箱边界：与 Bash 同一个 provider，不可用则 fail closed',
+      file: 'packages/ptc-runtime/ptc-runtime-node/src/index.ts:224',
+      lang: 'ts',
+      note: '重构动机就在这一行：worker thread 只隔离 JS 状态、不施加 OS 沙箱策略，模型可以直接 import(node:fs) 绕过工具策略检查。换成进程后，约束用的是与 Bash 完全相同的 ctx.sandbox provider 和同一个 policy 类型；约束不可用时返回 sandbox-unavailable，绝不降级为无约束执行。',
+      code: `confined = policy.mode === 'danger-full-access'
+  ? undefined
+  : await this.ctx.sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)` },
+  ],
+  'ssh-remote': [
+    {
+      title: 'POSIX 不是「顺便只支持 Linux」，是设计前提',
+      file: 'packages/ssh/ssh/src/index.ts:73-80',
+      lang: 'ts',
+      note: '这个设计刻意不引入 isRemote 这类元数据标志——「执行世界靠 provider 本身描述，路径规范化由文件真正所在的文件系统来做」。要让「无标志」成立，两端路径语义必须一致，所以连本地客户端都必须是 POSIX。',
+      code: `constructor(ctx: Context, config: Config) {
+  super(ctx, 'ssh')
+  if (process.platform !== 'linux' && process.platform !== 'darwin') throw new Error('SSH runtime requires a POSIX client')
+  this.config = z.object({
+    host: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.@-]*$/),
+    node: z.string().startsWith('/'), helper: z.string().startsWith('/'),
+    helperHash: z.string().regex(/^[0-9a-f]{64}$/),
+    workspace: z.string().startsWith('/'), ...
+  })` },
+  ],
+  modality: [
+    {
+      title: '接缝可以只有 32 行：Name-Only Registry',
+      file: 'packages/browser-use/browser-use/src/index.ts:15-46',
+      lang: 'ts',
+      note: '没有 Browser 对象、没有统一的 click()/navigate()、没有资源生命周期。因为当前没有消费者需要在 Playwright / DevTools / Stagehand 之间可替换，强行抽象只会把三种后端锁死。注意 providerName 的 JSDoc：「including while its resources are closing」——清理期间仍占坑，这是防并存的真正保险。',
+      code: `/** Owns one optional provider registration in the shared browser-use service. */
+export class BrowserUseRegistry extends Service {
+  private registration: BrowserUseProviderName | undefined
+
+  constructor(ctx: Context) { super(ctx, 'browserUse') }
+
+  /** Name of the registered provider, including while its resources are closing. */
+  get providerName(): BrowserUseProviderName | undefined { return this.registration }
+
+  /**
+   * Reserve the sole provider slot until the contribution is disposed.
+   * A second registration fails even when it repeats the current name. Providers
+   * must stop their tools and await owned work before releasing this registration.
+   */
+  register(name: BrowserUseProviderName): () => Promise<void> {
+    if (this.registration !== undefined) {
+      throw new Error(\`browser use provider "\${this.registration}" is already registered\`)
+    }
+    return this.ctx.effect(() => {
+      this.registration = name
+      return () => { this.registration = undefined }
+    }, 'browserUse.register()')
+  }
+}` },
+  ],
   'cordis-vendor': [
     { title: 'waterfall：20 行看懂全部策略机制', file: 'vendor/cordis/src/events.ts', lang: 'ts',
       note: '共享一个 args 数组 + 尾部 next：监听器从最外层开始消费，调 next() 委托下游，不调则短路（连调用方的默认行为一起否决）。dsh 全部策略点（agent/pre-step、tools/pre-execute、llm/stream）都建立在这上面。',

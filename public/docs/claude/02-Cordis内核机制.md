@@ -120,3 +120,74 @@ export const Config: z<Config> = z.object({
 2. **配置即组合**：整个产品形态（web/headless/自定义）就是 yml 行的堆叠与补丁，见 01 篇的 profile/bundle 分层。
 3. **effect 树保证可卸载**：任何插件、任何子树都能干净拔掉——运行时自我修改（`tool-cordis`：agent 检视/挂载自己的插件）因此是安全的。
 4. **isolate 领域**：同一服务可以在子树里有私有实现——per-session 的 agent preset 组合靠它成立。
+
+
+## 📌 0.2.0 增量（0.1.2-alpha.2 → 0.2.0-rc.2，`0a53fb5` → `639ed01`）
+
+**结论先行：本篇不需要重写。** 内核五个核心文件在整个区间**字节级未变**——
+`context.ts` / `service.ts` / `registry.ts` / `reflect.ts` / `utils.ts` 的 blob hash 完全一致。
+Context 代理、Service 基类与定义方式、Registry/Inject、`ctx.effect()` 的宿主 Fiber 逻辑全部零改动。
+官方自己的 `docs/cordis-primer.md` 在这个区间也是**零 diff**。
+
+`fiber.ts` / `events.ts` 有改动，涉及两处订正 + 一个新增机制。
+
+### 订正 1：`internal/update` waterfall 变成纯同步
+
+```ts
+// vendor/cordis/src/events.ts:342-343
+  /** Waterfall: a fiber config update is being applied; skip next() to veto. */
+  'internal/update'(this: Fiber, config: any, noSave: boolean, next: () => void): void
+```
+
+0.1.2 时签名是 `next: () => void | Promise<void>): void | Promise<void>`。
+这是内核里**唯一的破坏性签名变更**。
+
+### 订正 2：`Fiber.update()` 不再返回 waterfall 结果
+
+```ts
+// vendor/cordis/src/fiber.ts:747-752
+    config = this._resolveConfig(config)
+    this.context.waterfall(this, 'internal/update', config, noSave, () => {
+      this.config = config
+      this._error = undefined
+      return this.restart()
+    })
+```
+
+0.1.2 是 `return this.context.waterfall(...)`。**含义：调用方不能再 await 一次 update 的重启完成。**
+
+### 新增：Volatile 配置引用（旁路，不替换任何既有机制）
+
+```ts
+// vendor/cosmokit/src/volatile.ts:5-13
+export type VolatileSnapshot<T> = T extends object ? { readonly [K in keyof T]: VolatileSnapshot<T[K]> } : T
+
+/** A stable reference; keep the reference, or capture its value for one operation only. */
+export interface Volatile<T> {
+  get(): VolatileSnapshot<T>
+}
+```
+
+schema 可以返回 `Volatile<T>`；Loader 对**只涉及 volatile 字段的配置变更**直接写进运行中的引用、
+**不重启 fiber**，并通过新事件 `loader/volatile-update` 通知宿主 fiber。
+而**直接调 `fiber.update()` 仍走原有 update waterfall + 默认重启**。
+
+这条对插件作者很实际：**"改了不该重挂"的配置字段打 `.volatile()`**，
+否则用户每改一次配置你的服务就被 dispose 重建一次。详见 [15 插件生命周期](15-插件生命周期与可观测性.md)。
+
+### 顺带：一个 `ctx.effect` disposer 的闭包反面教材
+
+```ts
+// vendor/cordis/src/logger.ts:232-237
+  exporter(exporter: Exporter) {
+    return this.ctx.effect(() => {
+      const id = ++this._snExporter
+      this.exporters.set(id, exporter)
+      return () => this.exporters.delete(id)
+    }, 'ctx.logger.exporter()')
+  }
+```
+
+旧版 disposer 里读的是**当时最新的** `_snExporter`，注册第二个 exporter 后再 dispose 第一个**会删错人**。
+
+**规则：`ctx.effect` 的 disposer 必须闭包捕获自己的 handle，不能读共享的可变状态。**

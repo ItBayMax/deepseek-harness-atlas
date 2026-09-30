@@ -26,7 +26,7 @@ const CONFIG = {
     },
   ],
   publicDir: process.env.PUBLIC_DIR || path.resolve(__dirname, '../public'),
-  skipDirs: ['node_modules', '.git', 'dist', '_meta', 'i18n', 'postmortem'],
+  skipDirs: ['node_modules', '.git', 'dist', '_meta', 'i18n', 'postmortem', 'ops'],
 };
 
 const OUT = path.join(CONFIG.publicDir, 'docs');
