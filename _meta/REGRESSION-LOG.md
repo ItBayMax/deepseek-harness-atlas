@@ -34,3 +34,66 @@
    **浏览器验证**：meta 徽章（0.2.0-rc.2 / 639ed01539 / 2026-09-30）、37 模块全部 files 非零、26 个模式、新增文档 HTTP 200、控制台零错误；`npm run build` 通过（25.13s）。
 
 7. **浏览器验证**：首页/架构分层/依赖脉络（25 节点 45 边）/核心流程/模块详情（关键源码标签页）/双源文档库（108 篇，claude 8 + official 100）/mermaid 时序图（agent-lifecycle.zh.md，510×465 SVG）全部渲染正常，控制台零错误；`npm run build` 通过。
+
+
+---
+
+## 2026-10-22 · 基线 0.2.0-rc.2 → 0.2.1-rc.2（`639ed01` → `687f282`，1925 个主线 commit）
+
+**数据规模变化**
+
+| 项 | 上轮 | 本轮 |
+|---|---|---|
+| dsh 功能包（`packages/*/*`） | 316 | **342** |
+| workspace 全成员 | 338 | **365** |
+| `packages/experimental/` | 21 | **47**（新增 27、删除 1） |
+| atlas 模块 | 37 | **41** |
+| 清单文件合计 | 7341 | **10496** |
+| 解读文档 | 16 篇 | **17 篇**（新增「17 实验层与包分类治理」；16 为本轮前半段新增） |
+
+**本轮推翻的旧结论 5 条**（已在各文档原地更正，docs/00 文末新开一张表）：
+(1) **局域网绑定**——`host` 从两值枚举（`127.0.0.1`/`0.0.0.0`）改为接受任意**具体** IPv4/IPv6 字面量，
+    通配地址拒得更早；新增原生 TLS（`--tls-cert`/`--tls-key`）。**这意味着 socket 代理不再必要。**
+(2) **凭据优先级翻转**——`.credentials.yaml` 现在压过导出的环境变量，`KEY=… dsh` 按次覆盖失效
+    （出厂 headless profile 例外，它整个不挂载凭据存储）。
+(3) **`engines.dsh` 语义反转**——从被忽略变成独自裁决，peers 失效，fail-closed。
+(4) **会话格式版本号不再是充分判据**——版本号仍是 4，但事件词汇表扩张，
+    0.2.0 读取器会**拒绝**含 `working-directory/change` 的 0.2.1 日志。
+(5) **`ctx.invariants` 整包删除**——且职责**未转移而是被放弃**（见下）。
+
+**经核验仍然成立**：`AssistantStreamRecord` 四变体与 `SessionEventLikeEntry` 二元
+**字节级未变**（`git diff` 为空）；`.credentials.yaml` 两段式结构未变；
+`conversation.view` 插槽仍有效；`dsh.manifestVersion` 仍只是声明、全仓无校验点。
+
+**上游发现（可提 issue）**
+1. `packages/client/AGENTS.md:108` 仍让实现者写 `chunkrow/*` 分支，该类型在 `.ts/.tsx` 里 0 命中
+   —— 已提 Discussion #8540（本轮确认行号从 104 漂到 108，问题仍在）。
+2. `packages/util/package-manifest/README.md:93` 仍写「不强制检查 `engines.dsh`」—— 已反。
+3. 插件市场索引格式 Note 写 `engines` 必填，实现是可选（`plugin-market-index/src/types.ts:62-63`）。
+4. `2026-10-06-web-desktop-plugin-identity-compatibility` 标题误导，内容与 web/desktop 身份无关。
+5. `PRIVATE_EXPERIMENTAL_PACKAGE_DIRECTORIES` 是空数组，但 AGENTS.md 把它写得像有成员。
+6. **invariants 删除（−15409 行）没有留下任何 `notes/implemented/` 决策记录**，
+   违反该仓库自己 `docs/AGENTS.md` 的规定；要还原「为什么放弃运行时关系检查」
+   只能读两篇旧 Note 的 **diff**。
+
+**本轮修掉的自身缺陷**
+- `gen-inventory.mjs` 三个分组指向已不存在的目录（`packages/webhook`、`packages/hooks`、
+  `packages/runtime-diagnostics`）；`_meta/inventory/` 下留有对应的 3 个孤儿 JSON（91 条），
+  已删。**与上轮 `client.json` 孤儿同一类错误。**
+- `experimental/` 47 个包里此前只覆盖 3 个子组，**44 个包完全没进清单**；
+  新增 `experimental-rest` 兜底组（758 文件），并按目录实际内容取补集以免重复计数。
+- 第一版 `covered` 集合写错包名（写了不存在的 `agent-team-bundle`，漏了实际存在的
+  `agent-team-profile`/`agent-team-web-profile`/`client-ui-agent-team`），虚增 28 个文件，已修。
+- `FILE_MAP` 有 5 条悬空映射，其中 **2 条（`e2b`、`code-runtime`）是上一轮删分组时漏改的遗留**，
+  已一并修正为 `ssh` / `ptc-runtime`。
+- 新增一次性重叠校验脚本；它第一版因字段名写错（`entry.path` 实为 `entry.f`）解析出 0 条却报
+  「✅ 无重叠」—— **一个只会通过的检查等于没有检查**，已加语料防护（合计为 0 即失败）。
+
+**浏览器验证**：meta 徽章（dsh@0.2.1-rc.2 / 687f282e86 / 2026-10-22）、41 模块、
+4 个新模块 doc 链接正确、新增两篇文档 HTTP 200（8244 / 10876 字节）、控制台零错误；
+`npm run data` 10496 文件、重叠校验 0 重复；`npm run build` 通过。
+
+**安全核查**：`public/` 与 `dist/` 下 ops 文档痕迹 **0 条**、
+服务器 IP / 本地绝对路径命中 **0 个文件**。
+> 注：dev server 对不存在路径返回 SPA 回退页（HTTP 200），
+> 单看状态码会误判为泄漏——验证时必须带一个「确定不存在」的对照路径比对响应体。

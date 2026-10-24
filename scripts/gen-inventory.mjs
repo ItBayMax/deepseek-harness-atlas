@@ -43,7 +43,9 @@ const CONFIG = {
       'packages/experimental/client-ui-agent-team'] },
     { name: 'experimental-webworker', dirs: ['packages/experimental/webworker-runtime', 'packages/experimental/webworker-packer'] },
     { name: 'experimental-inspector', dir: 'packages/experimental/inspector' },
-    { name: 'webhook', dir: 'packages/webhook' },
+    // 0.2.1 新增实验层：agent-team / webworker / inspector 已各自单列，
+    // 其余 experimental 包此前完全没有进清单（47 个里只覆盖了 3 组）。
+    { name: 'experimental-rest', dirs: () => experimentalRest() },
     { name: 'lsp', dir: 'packages/lsp' },
     { name: 'skill', dir: 'packages/skill' },
     { name: 'subagent', dir: 'packages/subagent' },
@@ -58,7 +60,6 @@ const CONFIG = {
     { name: 'spill', dir: 'packages/spill' },
     { name: 'interaction', dir: 'packages/interaction' },
     { name: 'feedback', dir: 'packages/feedback' },
-    { name: 'hooks', dir: 'packages/hooks' },
     { name: 'session-pkg', dir: 'packages/session' },
     { name: 'session-query', dir: 'packages/session-query' },
     { name: 'storage', dir: 'packages/storage' },
@@ -77,7 +78,6 @@ const CONFIG = {
     { name: 'extensions', dir: 'packages/extensions' },
     { name: 'util', dir: 'packages/util' },
     { name: 'test-support', dir: 'packages/test-support' },
-    { name: 'runtime-diagnostics', dir: 'packages/runtime-diagnostics' },
     { name: 'snapshots', dir: 'snapshots' },
     { name: 'ssh', dir: 'packages/ssh' },
     { name: 'ptc-runtime', dir: 'packages/ptc-runtime' },
@@ -101,6 +101,27 @@ function clientSplit() {
   const kernel = [], ui = [];
   for (const e of subs) (e.name.startsWith('ui-') ? ui : kernel).push(`packages/client/${e.name}`);
   return { kernel, ui };
+}
+
+/**
+ * experimental/ 下未被 agent-team / webworker / inspector 三组覆盖的其余包。
+ * 单列的那三组是手工枚举的，这里按目录实际内容取补集，避免重复计数，
+ * 也避免上游再加实验包时清单悄悄落后。
+ */
+function experimentalRest() {
+  const base = 'packages/experimental'
+  const abs = path.join(CONFIG.repoRoot, base)
+  if (!fs.existsSync(abs)) return []
+  const covered = new Set([
+    // 与上面三个单列组的 dirs 逐字对应；写错一个名字就会重复计数。
+    'agent-team', 'tool-agent-team', 'agent-team-profile',
+    'agent-team-web-profile', 'client-ui-agent-team',
+    'webworker-runtime', 'webworker-packer',
+    'inspector',
+  ])
+  return fs.readdirSync(abs, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && !covered.has(entry.name))
+    .map(entry => `${base}/${entry.name}`)
 }
 
 const CODE_EXT = new Set(['.java', '.kt', '.scala', '.groovy', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
