@@ -97,3 +97,71 @@
 服务器 IP / 本地绝对路径命中 **0 个文件**。
 > 注：dev server 对不存在路径返回 SPA 回退页（HTTP 200），
 > 单看状态码会误判为泄漏——验证时必须带一个「确定不存在」的对照路径比对响应体。
+
+
+---
+
+## 2026-11-24 · 基线 0.2.1-rc.2 → 0.2.3-alpha.2（`687f282` → `4b399c3`，6577 个主线 commit）
+
+跨 0.2.2-rc.1~rc.5 与 0.2.3-alpha.1/alpha.2。**迄今最大的一轮**（上轮 1925）。
+
+**数据规模**
+
+| 项 | 上轮 | 本轮 |
+|---|---|---|
+| dsh 功能包 | 342 | **397**（新增 70、删除 15） |
+| workspace 全成员 | 365 | **421** |
+| `packages/experimental/` | 47 | **59** |
+| atlas 模块 | 41 | **44** |
+| 清单文件合计 | 10496 | **15895** |
+| 解读文档 | 18 篇 | **20 篇** |
+
+**三个新的顶层包组**：`packages/connector/`（9）、`packages/team/`、`packages/account/`。
+
+**新增解读文档**：19（Forge 与 Liveshare）、20（Connector 体系与 MCP 管理器）。
+
+**本轮推翻的旧结论 12 条**（docs/00 文末新开一张表），其中最要紧的三条：
+1. **SQLite 持久化回归**——但出厂默认仍是 JSONL，0 个 composition 挂它。
+   旧结论"只剩 JSONL / 包已删 / 无自动迁移"三句里**两句错**。
+2. **agent-team 晋升出实验层**进 `packages/team/`，并进入出厂默认组合——
+   这是我们上一篇写的"晋升规则"第一次被真实执行。
+3. **凭据规则多了成规模的例外**：4 个 CLI 连接器的凭据在厂商 CLI 配置与系统钥匙串里，
+   **与用户自己的终端共用**，`DSH_HOME` 不迁移。
+
+**经核验仍然成立（对第三方插件最要紧）**
+- `SessionEventLikeEntry` 的 `git diff` **零输出**；`AssistantStreamRecord` 只有
+  **一行 import 合并**，四变体逐字未变；`SESSION_FORMAT_VERSION` 仍是 4
+- `--host` 规则与 TLS flag **逐字不变**，默认 `127.0.0.1:3080`
+- `.credentials.yaml` 优先级、headless 不挂凭据、两段式结构全部不变
+- 我们已开源的 `dsh-replay-theater` 依赖的插槽与三个 inject 包全在，
+  版本范围 `^0.2.0-rc.2` 对 0.2.3-alpha.2 仍满足
+
+**上游发现 / 值得记的**
+1. ⭐ `experimental/timeline` 明文 *"adapts ideas from dsh-progress-check, under the MIT license"*，
+   并给了"从独立插件导出 → 禁用 → 启用官方版"的迁移说明——
+   **上游确实做过一次"把社区插件吸收成第一方实验包"的动作**。
+2. Forge **不是** superagent 原型的收编：harness 全仓 `superagent` 零命中，
+   Forge 纯拉模式、无事件入口、**连给模型的工具都还没有**、无任何授权概念。
+   主线同层的是 `experimental/webhook`，且本轮未动。
+3. `client/script-realm` **明文不是安全沙箱**（"preserves direct references and is not a
+   security sandbox"）——又一处"名字像隔离、实际是组织"。
+4. 新增 15 条 `persistence-changes`，其中 action-card 决定事件是 **required-on-read**：
+   版本号仍是 4，但旧读取器会拒绝含它的日志。**同一个模式第二轮应验。**
+
+**⚠️ 方法论修正（下轮必须改）**
+`.agents/notes/` 的**文件名日期是 authoring 日期，不是落主干日期**。
+实例：`2026-08-31-mcp-manager-plugin` 的功能分支 2026-11-03 才合入——
+按文件名日期筛"基线之后"会**漏掉它**。
+正确做法：`git log --first-parent --diff-filter=A <基线>..<HEAD> -- <路径>`。
+
+**我自己犯的一个错（记下来防复发）**
+派发调研时我推断「`web-search-exa`/`perplexity` 被删是不是被 connector 取代了」。
+**不成立**——升级指南里 connector 零次提及，真实理由是 Search 收敛到
+`deepseek-search-api`（从按模型 token 计费改成按 Search API 计费）。
+两件事时间重叠但因果无关。**"一轮里同时发生"不构成因果。**
+
+**验证**
+- `npm run data` 15895 文件；重叠校验 **0 重复**，条目数与构建输出精确相符（无孤儿）
+- `npm run build` 通过
+- 安全：真实 `ops` 目录 **0 命中**、敏感串 **0 命中**
+  （注意 `find -ipath '*ops*'` 会误匹配 `reasoning-body-pr**ops**`，要查目录而非子串）

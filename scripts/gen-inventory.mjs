@@ -74,6 +74,10 @@ const CONFIG = {
     { name: 'sdk', dir: 'packages/sdk' },
     { name: 'acp', dir: 'packages/acp' },
     { name: 'mcp', dir: 'packages/mcp' },
+    // 0.2.3 新增的三个顶层包组
+    { name: 'connector', dir: 'packages/connector' },
+    { name: 'team', dir: 'packages/team' },
+    { name: 'account', dir: 'packages/account' },
     { name: 'python', dir: 'python' },
     { name: 'extensions', dir: 'packages/extensions' },
     { name: 'util', dir: 'packages/util' },

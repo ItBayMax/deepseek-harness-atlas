@@ -62,16 +62,15 @@ interface SessionEventMap {
     headerSeq?: SessionSeq
   }
   /**
-   * The rendered system prompt on the model-visible surface. The loop appends
-   * the first one as surface node 0 before the step's first `user/message`.
-   * A prepared in-history route can append nonempty changes in a continuing
-   * series. An incapable route or new series normalizes text to the first system
-   * node. Normalization empties nonempty later nodes, then rewrites the head if
-   * needed, through logged per-node replacements. An empty rendering always
-   * clears all active system nodes, leaving no older instructions model-visible.
-   * Empty later nodes are dormant and project to no message; an empty head with
-   * no active later node records "no system prompt". Restored nonempty text follows
-   * the same route and series rule; empty nodes never restore older text.
+   * System instructions and notices on the model-visible surface. The first
+   * accepted assembly reserves node 0, even with empty content. Later admissions
+   * append new or changed sections independently of the route's capabilities.
+   * Source metadata identifies canonical text and notices; retired records remove
+   * a source from committed state. Empty active text withdraws its instructions
+   * while preserving the source. Earlier messages retain their positions.
+   * `source.reset` replaces committed state, including when compaction rebuilds
+   * the initial system node from current instructions.
+   * Empty system nodes remain in the surface but produce no model message.
    */
   'system/message': { turn: number; step: number; message: SystemMessage }
   /**
@@ -142,8 +141,8 @@ interface SessionEventMap {
   /**
    * Route metadata for the next request, logged only when the route, capacity,
    * or system prompt update mode changes. It does not participate in request
-   * reconstruction or header equality. Prompt admission uses the bound prepared
-   * call's capability, not this snapshot from an earlier request.
+   * reconstruction, header equality, or system-section admission. The bound
+   * prepared call's capabilities determine adapter representation.
    */
   'request/context': RequestContext
   /**
@@ -180,12 +179,12 @@ interface SessionEventMap {
 
 ### 请求头事件：`request/header`
 
-请求信封（即 `EpochHeader`：调用配置 + 适配器所提供默认值的标记 + 已组装的工具 schema）会作为会话状态写入日志，因此每个对话请求都是日志的纯函数（见可重建性 Agent Note）。渲染后的系统提示词不属于请求头：它是派生历史，即 surface 第 0 号节点上的 `system/message` 事件以及任何后续的历史内系统节点（[决策](../../.agents/notes/implemented/architecture/2026-09-02-system-prompt-as-surface-node.zh.md)），因此提示词变更替换或追加一个系统节点，而请求头保持不变。带有 reason `'initial'` 或 `'resume'` 的完整 `request/header` 快照记录每个 agent loop 实例的边界；请求变化时会追加 reason 为 `'change'` 的快照；未变的信封显式开启消息序列或跟随 surface 替换时，会追加 reason 为 `'series'` 的快照。如果 `'initial'`、`'resume'` 或 `'change'` 快照所属请求同时开启序列，它会携带 `startsSeries: true`；reason `'series'` 已记录这一事实。普通的仅追加后续 Turn，以及同一模型消息序列内的后续 Step 与重试沿用最新快照。`foldRequestHeader(events)` 通过选择最新快照重建请求头。该事件不是 `SurfaceEventType`，不产生 LLM 消息。
+请求信封（即 `EpochHeader`：调用配置 + 适配器所提供默认值的标记 + 已组装的工具 schema）会作为会话状态写入日志，因此每个对话请求都是日志的纯函数（见可重建性 Agent Note）。渲染后的系统提示词不属于请求头：它是派生历史，即 surface 第 0 号节点上的 `system/message` 事件以及任何后续的历史内系统节点（[决策](../../.agents/notes/implemented/architecture/2026-09-02-system-prompt-as-surface-node.zh.md)），因此普通提示词变更追加系统节点，而请求头保持不变。带有 reason `'initial'` 或 `'resume'` 的完整 `request/header` 快照记录每个 agent loop 实例的边界；请求变化时会追加 reason 为 `'change'` 的快照；未变的信封显式开启消息序列或跟随 surface 替换时，会追加 reason 为 `'series'` 的快照。如果 `'initial'`、`'resume'` 或 `'change'` 快照所属请求同时开启序列，它会携带 `startsSeries: true`；reason `'series'` 已记录这一事实。普通的仅追加后续 Turn，以及同一模型消息序列内的后续 Step 与重试沿用最新快照。`foldRequestHeader(events)` 通过选择最新快照重建请求头。该事件不是 `SurfaceEventType`，不产生 LLM 消息。
 
 ```ts type-equiv
 /**
  * Logged request state outside derived history: call config and tools. The
- * system prompt is derived history — surface node 0, a `system/message` event.
+ * system prompt is derived history — the initial and subsequent `system/message` nodes.
  * The latest full `request/header` snapshot reconstructs the header; canonical
  * empty optional fields are absent.
  */
@@ -207,7 +206,7 @@ interface EpochHeader {
 
 ### 路由容量事件：`request/context`
 
-请求所解析到的路由的上下文元数据是独立的已记录状态，在同一步骤内紧随 `request/header` 追加，且仅在提供方、模型、容量或 `systemPromptUpdate` 模式与上一条记录不同时追加。它保持在 `EpochHeader` 之外，因为该类型是 `headerEquals` 逐字段比较的重建约定。容量与更新模式描述的是路由，不是请求输入，把它们折叠进去会让一次路由变化被登记为请求信封的 `change`，也会把适配器元数据拉进 loop 的请求重建。与 `request/header` 一样，它不是 `SurfaceEventType`，也不产生 LLM 消息。`session.requestContext()` 以增量方式归并最新一条记录；agent loop 在决定变化后的系统提示词是替换最新的系统节点还是追加到已缓存历史之后时，读取该记录的 `systemPromptUpdate`（[决策规则](../../packages/core/agent-loop/README.zh.md#understand-the-implementation)）。适配器不公布容量的路由会以缺失 `contextWindow` 的形式记录，因此新记录可以清除较早路由的容量；未声明更新模式的路由同样会清除较早路由的 `systemPromptUpdate`。
+路由上下文元数据是独立的已记录状态，仅在提供方、模型、容量或 `systemPromptUpdate` 变化时，于同一步骤内紧随 `request/header` 追加。这些字段描述已准备路由，位于 `EpochHeader` 之外；它们不选择系统准入，也不产生 LLM 消息。`session.requestContext()` 以增量方式归并最新记录。缺失的 `contextWindow` 或 `systemPromptUpdate` 会清除上一条路由的对应值。
 
 ```ts type-equiv
 /** Registration-bound metadata for one resolved model route. */
@@ -297,7 +296,7 @@ type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 ## Surface 类型
 
-产生消息的类型（`SurfaceEventType`：`system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result`）携带 surface 元数据，用来声明它们如何加入有序的派生 surface。`system/message` 承载渲染后的系统提示词：循环把第一条追加为 surface 第 0 号节点，并在提示词变化时恰好替换最新的系统节点，或在历史内路由上追加一条新的；surface 折叠拒绝任何其他覆盖第 0 号节点 `system/message` 的替换，而后续系统节点是普通历史，压缩替换可以遮蔽它。见 [session surface Agent Note](../../.agents/notes/implemented/architecture/2026-06-18-session-surface.zh.md)。
+产生消息的类型（`SurfaceEventType`：`system/message`、`developer/message`、`user/message`、`assistant/message`、`tool/result`）声明其在有序派生 surface 中的位置。系统消息包含段更新和完整重置；[system-prompt 包](../../packages/core/system-prompt/README.zh.md) 规定其含义。第 0 号节点的系统消息只允许系统消息恰好替换该节点；后续系统节点可以被压缩遮蔽。见 [session surface Agent Note](../../.agents/notes/implemented/architecture/2026-06-18-session-surface.zh.md)。
 
 ### `SurfaceEventType`：事件类型中产生消息的子集
 
@@ -337,7 +336,7 @@ type SurfaceOp =
   | { op: 'replace'; startSeq: SessionSeq; endSeq: SessionSeq }
 ```
 
-`'append'` 是常规的尾部追加路径。`replace` 恰好包含 `op`、`startSeq` 和 `endSeq`，不接受别名或额外键。它遮蔽这两个当前 surface 事件序号之间的闭区间，并在原位置插入新事件；相同端点仅替换一个条目。端点必须早于替换事件，但它们的相对顺序按 surface 顺序而非数值序号顺序确定。
+`'append'` 在尾部追加。`replace` 恰好包含 `op`、`startSeq` 和 `endSeq`；它遮蔽两个当前 surface 节点之间的闭区间，并在原位置插入新事件。相同端点仅替换一个条目。所有引用的事件都必须在日志中早于新事件。位置按 surface 顺序而非数值序号顺序确定。
 
 ### `SurfaceIntent`：`session.append()` 的参数
 
@@ -404,10 +403,21 @@ interface SessionMessageProjection<T extends SessionEventType = SessionEventType
 `SurfaceManager(log, baseSeq?, projections?)` 也可以折叠一个连续的已加载窗口，其第一个事件的绝对序号为 `baseSeq`。每个事件在该绝对序号空间中仍保持连续；如果替换跨过窗口头部，由于其声明的范围并不存在，该替换会失败。
 
 ```ts type-equiv
+/** One system node on the current surface, including an empty head. */
+interface SystemSurfaceNode {
+  readonly seq: SessionSeq
+  /** Whether the logged content array has no blocks; a node with empty text blocks is not empty. */
+  readonly isEmpty: boolean
+}
+```
+
+```ts type-equiv
 /** Readonly live projection of the message-producing session events. */
 interface SessionSurface {
   /** Current surface event sequences in model-visible order. */
   readonly nodes: readonly SessionSeq[]
+  /** Current system nodes in surface order, scanned from the surface on each read; citations do not affect membership. */
+  readonly systemNodes: readonly SystemSurfaceNode[]
   /** Monotonic count of committed positional replacements. */
   readonly replaceGeneration: number
   /** Monotonic count of committed replacements and plugin-owned message changes. */
@@ -446,6 +456,17 @@ interface SurfaceFoldResult {
 ```
 
 ## `Session` 公共 API
+
+### `SessionEventInput`：一个候选事件
+
+```ts type-equiv
+/** One positional event call proposed for append, without assigned sequence or time. */
+type SessionEventInput = {
+  [K in SessionEventType]: readonly [type: K, data: SessionEventMap[K], ...opts: K extends SurfaceEventType ? [opts: SurfaceIntent<K>] : []]
+}[SessionEventType]
+```
+
+数组中的每个成员将事件类型与对应载荷配对，且仅对产生消息的事件要求surface意图。
 
 去除方法体的声明与源码中的普通类保持同步，覆盖其脱离态工厂、状态访问器、append 方法和历史投影。存储操作仍由生成的 [`ctx.sessions` 小节](#ctxsessions--sessionstore)记录。
 
@@ -573,6 +594,18 @@ declare class Session {
   isOwnSeq(seq: SessionSeq): boolean;
   /** The next event's sequence number — always the log length (the `seq = log.length` contiguity contract). */
   get seq(): SessionLogOffset;
+  /** Current event while synchronously notifying a batch's observers. */
+  get currentBatchPublication(): SessionEvent | undefined;
+  /**
+   * Append consecutive events together after validating every candidate and dispatch.
+   * Observers read the complete committed log and final message surface.
+   * Listener registration changes during publication take effect on the next append.
+   * Persistence listeners retain their own durability rules.
+   * @param inputs - event payloads and surface intents in commit order. An empty array records no events.
+   * @returns immutable committed events in the same order.
+   * @throws if the Session cannot accept writes, including an empty append, or any candidate or synchronous dispatch validation fails.
+   */
+  append(inputs: readonly SessionEventInput[]): readonly SessionEvent[];
   /**
    * Append one typed event to the log and synchronously notify observers via
    * the store-owned, module-private publication hooks. The hot path never blocks
@@ -580,6 +613,9 @@ declare class Session {
    * the log, the append is committed: observer failures are logged and
    * contained per listener, so they do not change the return value or prevent
    * later listeners from observing the same accepted event.
+   * Independent Sessions append without notifying store observers. Once a store
+   * prepares or enters the instance, writes require a completed creation
+   * announcement and remain disabled after removal.
    *
    * @param type - The event type (key of {@link SessionEventMap}).
    * @param data - The event payload; must be JSON-serializable.
@@ -595,7 +631,9 @@ declare class Session {
    * @returns the logged event — its assigned `seq`/`time` plus the SNAPSHOT of
    *   `data` that entered the log, so reading `event.data` back sees the logged
    *   value, never the caller's still-mutable input.
-   * @throws if `data` or surface metadata is not losslessly JSON-serializable
+   * @throws if a store-owned Session is unentered or its creation announcement
+   *   has not completed, or if `data` or surface
+   *   metadata is not losslessly JSON-serializable
    *   (BigInt, function, symbol, undefined, negative zero, non-finite number,
    *   circular reference, sparse array, or an exotic object such as
    *   Map/Set/Date/class instance), or when the candidate violates the
@@ -680,7 +718,7 @@ declare class Session {
 
 `ctx.sessions.create(id, { seed, meta })` 是底层的回放/fork 原语。对于普通的活跃会话 fork，`SessionStore` 暴露一个策略 API：
 
-- `fork(source, boundary?, childSessionId?)` 接受一个活跃的 `Session` 对象或活跃的 `SessionId`，选取到 `SessionSeq` boundary（含）为止的源事件（默认为当前最后一个事件），要求所选前缀结束时没有开放轮次，然后创建一个活跃的子会话，包含深克隆的 seed event、`parentSession`、`isSeeded: true`、精确 `inheritedEventCount` 及继承的 `cwd`。
+- `fork(source, boundary?, childSessionId?)` 接受一个活跃的 `Session` 对象或活跃的 `SessionId`，选取到 `SessionSeq` boundary（含）为止的源事件（默认为当前最后一个事件），闭合任何开放尾部，然后创建一个独立的活跃会话，包含深克隆的 seed event、`isSeeded: true`、精确 `inheritedEventCount` 及继承的 `cwd`，不含 `parentSession`。
 
 显式 `boundary` 允许调用者从任意稳定的轮次间位置 fork，包括之前的 `turn/end` 或更晚的独立纯日志事件，即使源会话有更新的事件或正在进行的轮次。API 拒绝结束于开放轮次内的前缀，而不是静默截断。`dsh-subagent-fork-in-process` 保留其已完成前缀截断逻辑，因为工具调用时的委托通常在父轮次仍然打开时启动；普通的会话分支应显式指定请求的 boundary。
 
@@ -707,8 +745,9 @@ interface TurnEndReasonMap {
   blocked: { kind: 'blocked' }
   /**
    * The turn failed. `error` is always a structured failure: the `LlmError`
-   * facts verbatim, or `{ message: errorChain(error), code: 'UNKNOWN' }`
-   * flattened from any other error.
+   * facts verbatim, or `{ message: errorChain(error), code }` flattened from
+   * any other error, where `code` is `TOOL_ACTIVATION_FAILED` for a failed
+   * tool condition and `UNKNOWN` otherwise.
    */
   error: { kind: 'error'; error: LlmFailure }
   /** At least one step reached its output-token ceiling, even if a plugin continued the turn. */
@@ -813,6 +852,29 @@ interface PluginRecord {
 
 可选的 `application` 指定文件关联应用，不修改系统默认值；`workspacePathApplications({ path })` 在校验 Host 路径后返回当前关联应用、名称、图标和默认项。
 
+## Session 日志上传排除条件
+
+`ctx.sessionLogDeepSeek.registerExclusion()` 注册归调用方所有的判断函数，输入为 `SessionLogUploadRequest`。任意条件匹配时，在读取 Session 事件前省略日志贡献与接受回调。没有条件匹配时保留普通上传资格判断。[包 README](../../packages/session/session-log-deepseek/README.zh.md#upload-exclusions) 定义失败与释放行为。
+
+```ts type-equiv
+/** Request identity inspected before preparing a Session-log contribution. */
+interface SessionLogUploadRequest {
+  /** Live Session whose canonical log would be contributed. */
+  readonly sessionId: SessionId
+  /** Auxiliary request classification; absent for ordinary conversation requests. */
+  readonly purpose?: string
+}
+```
+
+```ts type-equiv
+/**
+ * Synchronous, side-effect-free upload exclusion owned by its registering plugin.
+ * @param request - request identity; the predicate must not mutate it.
+ * @returns `true` to omit the log field and acceptance callback, or `false` to keep checking eligibility.
+ */
+type SessionLogUploadExclusion = (request: SessionLogUploadRequest) => boolean
+```
+
 <!-- BEGIN GENERATED cordis-surface (gen-cordis-catalog.ts) — do not edit between markers -->
 
 <a id="cordis-surface"></a>
@@ -834,14 +896,6 @@ Host service backing the generated `ctx.remote.session` namespace.
  * @returns the live Agent or the stable Session-domain failure.
  */
 resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult>
-
-/**
- * Inspect one attached or persisted Session without activating its Agent.
- * @param sessionId - durable Session identity.
- * @param signal - optional caller cancellation for persistence reads.
- * @returns the current attached state or persisted header and event prefix.
- */
-inspect( sessionId: SessionId, signal?: AbortSignal, ): Promise<SessionInspection>
 
 /**
  * Read all visible Session rows without resuming an Agent.
@@ -942,8 +996,8 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote('prompt') async prompt(request: SessionPromptRequest, signal: AbortSignal): Promise<SessionPromptValue>
 
 /**
- * Read one image proven reachable from the addressed Session log.
- * @param request - Session and attachment identities used for authorization.
+ * Read one image from the attachment store after gateway authorization.
+ * @param request - image reference and gateway permission scope; Session existence is not checked.
  * @returns the durable attachment reference and base64-encoded bytes.
  */
 @Remote('attachment') attachment(request: SessionAttachmentRequest): Promise<SessionAttachmentValue>
@@ -964,11 +1018,51 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 
 /**
  * Read one cold-safe, message-aligned Session history page.
- * @param request - durable address, backward cursor, and page budget.
+ * @param request - durable address, optional fixed cut, backward cursor, and page budget.
  * @param signal - cancellation for persistence reads.
- * @returns one chronological page.
+ * @returns one chronological page with its inclusive cursor.
  */
-@Remote({ name: 'page', resources: { session: addressedSession } }) page(request: SessionPageRequest, signal: AbortSignal): Promise<SessionPage>
+@Remote events(request: SessionPageRequest, signal: AbortSignal): Promise<SessionEventsPage>
+
+/**
+ * Subscribe to Session events without reading a snapshot.
+ * @param request - Session address.
+ * @param signal - subscription cancellation.
+ * @returns readiness and subsequent events, without a snapshot.
+ */
+@Remote({ mode: 'stream' }) observeEvent(request: SessionObserveEventRequest, signal: AbortSignal): AsyncIterable<SessionEventFrame>
+
+/**
+ * Subscribe to Session projection changes.
+ * @param request - target Session.
+ * @param signal - subscription cancellation.
+ * @returns readiness followed by one projection change frame per committed event.
+ */
+@Remote({ mode: 'stream' }) observeProjections(request: SessionProjectionsRequest, signal: AbortSignal): AsyncIterable<SessionProjectionFrame>
+
+/**
+ * Read passive Session state.
+ * @param request - target Session.
+ * @param signal - read cancellation.
+ * @returns current passive state.
+ */
+@Remote state(request: SessionStateRequest, signal: AbortSignal): Promise<SessionState>
+
+/**
+ * Subscribe to complete Session state replacements.
+ * @param request - target Session.
+ * @param signal - subscription cancellation.
+ * @returns complete passive state replacements.
+ */
+@Remote({ mode: 'stream' }) observeState(request: SessionStateRequest, signal: AbortSignal): AsyncIterable<SessionState>
+
+/**
+ * Wait for Session quiescence or pending input with bounded assistant output.
+ * @param request - Session, wait bounds and output window.
+ * @param signal - caller cancellation.
+ * @returns stopping state and bounded assistant output.
+ */
+@Remote wait(request: SessionWaitRequest, signal: AbortSignal): Promise<SessionWaitValue>
 
 /**
  * Follow one Session log from its opening or resume cursor.
@@ -977,7 +1071,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
  * @returns a complete opening snapshot followed by gap-free durable event
  *   frames and optional cursorless assistant-stream frames.
  */
-@Remote({ mode: 'stream', resources: { session: addressedSession } }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>
+@Remote({ mode: 'stream' }) follow(request: SessionFollowRequest, signal: AbortSignal): AsyncIterable<SessionFollowFrame>
 
 /**
  * Read exact projections, returning cached hints only when migration is required.
@@ -985,7 +1079,7 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
  * @param signal - cancellation for the Session read.
  * @returns a sequenced baseline, cached hints when migration is deferred, or null when absent.
  */
-@Remote('projections') async projections(request: SessionProjectionsRequest, signal: AbortSignal): Promise<SessionProjectionsValue>
+@Remote('projections') projections(request: SessionProjectionsRequest, signal: AbortSignal): Promise<SessionProjectionsValue>
 
 /**
  * Stream a complete live-control baseline followed by replacement frames.
@@ -995,9 +1089,29 @@ workspaceDesktop(): { name: string; available: boolean; fileManager: 'finder' | 
 @Remote({ mode: 'stream' }) async *control(signal: AbortSignal): AsyncIterable<SessionControlFrame>
 ```
 
-Types: [SessionId](core.zh.md) · [SessionInspection](persistence.zh.md) · [SessionSearchRequest](session-query.zh.md)
+Types: [SessionId](core.zh.md) · [SessionSearchRequest](session-query.zh.md)
 
 Source: [`packages/api/session-controller/src/index.ts`](../../packages/api/session-controller/src/index.ts)
+
+<a id="ctxsessionlogdeepseek--sessionlogdeepseekservice"></a>
+
+### `ctx.sessionLogDeepSeek` — `SessionLogDeepSeekService`
+
+Incremental Session-log contributor with caller-owned upload exclusions.
+
+```ts cordis-catalog
+/**
+ * Exclude matching requests before reading or preparing their log contribution.
+ * Any matching rule suppresses both the field and its acceptance callback. With
+ * no matching rules, normal upload eligibility applies. A throwing rule fails
+ * this contribution; the request-extension registry omits it and reports the error.
+ * @param exclude - synchronous, side-effect-free predicate; `true` skips this upload.
+ * @returns effect disposer that removes this registration when called or when the caller unloads.
+ */
+registerExclusion(exclude: SessionLogUploadExclusion): () => Promise<void>
+```
+
+Source: [`packages/session/session-log-deepseek/src/index.ts`](../../packages/session/session-log-deepseek/src/index.ts)
 
 <a id="ctxsessions--sessionstore"></a>
 
@@ -1054,7 +1168,7 @@ create(id?: SessionId, options?: CreateSessionOptions): Session
  *   `eventState`, every seed event is either independently owned or any
  *   shared value is deeply frozen; {@link Session.fromRestore} validates and
  *   adopts those values without copying or freezing them.
- * @returns the constructed session, NOT yet in the store.
+ * @returns the store-owned session, not yet entered and read-only until announced.
  * @throws if a session with `id` already exists, metadata is not a plain
  *   lossless-JSON record with valid scalar fields, or `meta.cwd` is a
  *   non-absolute path.
@@ -1062,8 +1176,9 @@ create(id?: SessionId, options?: CreateSessionOptions): Session
 prepare(id?: SessionId, options?: PrepareSessionOptions): Session
 
 /**
- * Enter a {@link prepare}d session into the store: install the module-private
- * append publication hooks and add it to the store. Returns the DETACH
+ * Enter a session into the store: install the module-private
+ * append publication hooks and add it to the store. Writes remain disabled
+ * until {@link announce} completes successfully. Returns the DETACH
  * disposer (hooks + store removal). Does NOT emit `session/created` —
  * the caller yields this disposer inside its effect and THEN calls
  * {@link announce}, so a throwing `session/created` listener rolls the attach
@@ -1077,7 +1192,7 @@ prepare(id?: SessionId, options?: PrepareSessionOptions): Session
  * the two back-to-back so they never trip this, but the public API cannot
  * assume that.
  *
- * @param session - a {@link prepare}d session not yet in the store.
+ * @param session - an unentered session; independent instances become store-owned.
  * @returns the detach disposer (publication hooks + store removal). When called from
  *   a synchronous `session/created` listener, removal and disposal wait until
  *   that creation dispatch unwinds.
@@ -1088,7 +1203,9 @@ enter(session: Session): () => void
 /** Emit `session/created` exactly once for an {@link enter}ed session (with
  * the carrier {@link enter} captured). Separate from {@link enter} so the
  * caller can yield the detach disposer first (rollback safety — see
- * {@link enter}).
+ * {@link enter}). The Session remains read-only throughout synchronous
+ * dispatch; successful completion enables appends. A failed announcement
+ * leaves it read-only and cannot be retried.
  * @param session - the entered session to announce to listeners.
  * @throws if the session is not live or its announcement already began,
  *   including a reentrant call from a creation listener. */
@@ -1123,7 +1240,7 @@ get(id: SessionId): Session | undefined
 list(): Session[]
 
 /**
- * Create a live child session from an exact prefix of a live source.
+ * Create an independent live session from an exact prefix of a live source.
  * `boundary` is an inclusive source event seq; omitted means the source's
  * current last event. An open tail receives synthetic tool results and
  * step/turn closers with the forked cause. Closed steps and turns remain
@@ -1254,12 +1371,14 @@ Source: [`packages/api/session-controller/src/types.ts`](../../packages/api/sess
 
 #### `session/created` — emit
 
-Creation announcement during session publication. A synchronous throw vetoes and rolls back with a paired disposal; detach requested during dispatch is deferred. A returned-promise rejection is logged but cannot retroactively veto this synchronous boundary. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only sessions entered through that agent's context.
+Read-only creation announcement after store entry. New events reject until every synchronous listener has returned successfully. A synchronous throw vetoes creation and rolls back with a paired disposal; detach requested during dispatch is deferred. A returned-promise rejection is logged but cannot retroactively veto this synchronous boundary. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only sessions entered through that agent's context.
 
 ```ts cordis-catalog
 /**
- * Creation announcement during session publication. A synchronous throw vetoes and rolls
- * back with a paired disposal; detach requested during dispatch is deferred.
+ * Read-only creation announcement after store entry.
+ * New events reject until every synchronous listener has returned successfully.
+ * A synchronous throw vetoes creation and rolls back with a paired disposal;
+ * detach requested during dispatch is deferred.
  * A returned-promise rejection is logged but cannot retroactively veto this
  * synchronous boundary.
  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners
@@ -1300,13 +1419,16 @@ Source: [`packages/core/session/src/index.ts`](../../packages/core/session/src/i
 
 #### `session/event` — emit
 
-Post-commit, fire-and-forget append feed. The listener snapshot resolves before the log push, but callbacks run after it; observer failures are logged and contained without making the committed append fail. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only events from sessions entered through that agent's context.
+Post-commit, fire-and-forget append feed. The listener snapshot resolves before the log push, but callbacks run after it; observer failures are logged and contained without making the committed append fail. Array append commits every member before publishing them in order; `session.seq` and `session.surface` already include the complete batch. `session.currentBatchPublication` identifies the member being delivered. Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only events from sessions entered through that agent's context.
 
 ```ts cordis-catalog
 /**
  * Post-commit, fire-and-forget append feed. The listener snapshot resolves
  * before the log push, but callbacks run after it; observer failures are
  * logged and contained without making the committed append fail.
+ * Array append commits every member before publishing them in order;
+ * `session.seq` and `session.surface` already include the complete batch.
+ * `session.currentBatchPublication` identifies the member being delivered.
  * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners
  * receive only events from sessions entered through that agent's context.
  * @param session - the session whose log grew.
@@ -1340,4 +1462,25 @@ Awaited parallel durability checkpoint: every listener runs and the caller await
 Types: [Scoped](scope.zh.md)
 
 Source: [`packages/core/session/src/index.ts`](../../packages/core/session/src/index.ts)
+
+<a id="timeline-events"></a>
+
+### `timeline/*` events
+
+<a id="timelinepriority--emit"></a>
+
+#### `timeline/priority` — emit
+
+A saved user edit entered or left P0. Model task patches do not emit it.
+
+```ts cordis-catalog
+/**
+ * A saved user edit entered or left P0. Model task patches do not emit it.
+ * @mode emit
+ * @param session - the session that owns the task.
+ */
+'timeline/priority'(session: Session): void
+```
+
+Source: [`packages/experimental/timeline/src/storage.ts`](../../packages/experimental/timeline/src/storage.ts)
 <!-- END GENERATED cordis-surface -->
